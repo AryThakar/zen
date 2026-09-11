@@ -9,6 +9,7 @@
 Speech recognition, a language model and streaming speech synthesis, all local, behind one
 desktop window. Nothing you say, hear or type leaves the machine or is written to disk.
 
+[![CI](https://github.com/AryThakar/zen/actions/workflows/ci.yml/badge.svg)](https://github.com/AryThakar/zen/actions/workflows/ci.yml)
 ![Platform: Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4)
 ![Rust 1.91+](https://img.shields.io/badge/rust-1.91%2B-CE422B)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -138,7 +139,7 @@ acknowledgements drive backpressure and decide what enters the conversation hist
 ### 1. Build
 
 ```powershell
-git clone <repository-url> zen
+git clone https://github.com/AryThakar/zen.git
 cd zen
 cargo build --release --locked
 ```
