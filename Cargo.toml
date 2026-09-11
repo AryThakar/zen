@@ -22,7 +22,7 @@ thiserror = "2"
 futures-util = "0.3"
 ort = { version = "2.0.0-rc.13", features = ["ndarray"] }
 rubato = "5"
-libloading = "0.8"
+libloading = "0.9"
 hound = "3"
 getrandom = "0.4"
 tauri = { version = "~2.11.5", features = ["tray-icon", "image-png"] }
