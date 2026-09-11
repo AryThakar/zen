@@ -1,11 +1,18 @@
 # Weekly dependency update pull requests. CI runs on each one, so an update that breaks the
 # build, the tests or clippy shows up as a failing pull request rather than on `main`.
+#
+# Major versions are not proposed. Several dependencies sit on the native path (the Windows
+# API, WebView2, DLL loading), which CI cannot exercise without the models: a major upgrade
+# there is a deliberate change, proven with `zen.exe --self-test` and a live session.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
     groups:
       rust-minor-and-patch:
         update-types: [minor, patch]
@@ -14,6 +21,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
