@@ -31,7 +31,7 @@ tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_UI_WindowsAndMessaging"] }
 
 # A shipped Zen is one file the user double-clicks, so the release build is tuned for size
 # and startup. Thin LTO rather than fat: it recovers most of the size and nearly all of the
