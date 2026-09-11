@@ -21,9 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to the release the code and its clippy lints are verified with. Tracking
+      # `stable` lets a new Rust release add lints that fail an unchanged commit; moving to a
+      # newer toolchain is a deliberate change, made here and fixed in the same commit.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.97.1
           components: clippy, rustfmt
 
       - name: Cache cargo registry and build
