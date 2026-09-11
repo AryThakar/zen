@@ -240,8 +240,7 @@ cargo clippy --release --locked --all-targets -- -D warnings
 cargo test --release --locked --all-targets     # 236 tests, no models needed
 npm ci
 npm test                                        # interface unit tests
-npx playwright install chromium                 # once, for the UI tests
-npm run test:ui                                 # interface in headless Chromium
+npm run test:ui                                 # interface in headless Microsoft Edge
 ```
 
 CI runs all of the above on every push and pull request. The tests cover turn races,

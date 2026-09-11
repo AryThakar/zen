@@ -30,8 +30,7 @@ cargo clippy --release --locked --all-targets -- -D warnings
 cargo test --release --locked --all-targets
 npm ci
 npm test
-npx playwright install chromium   # once
-npm run test:ui
+npm run test:ui    # uses the installed Microsoft Edge
 ```
 
 With the assets installed, also run the native checks:

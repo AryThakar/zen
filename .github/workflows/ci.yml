@@ -19,7 +19,7 @@ jobs:
     name: Rust build, test and lint
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Pinned to the release the code and its clippy lints are verified with. Tracking
       # `stable` lets a new Rust release add lints that fail an unchanged commit; moving to a
@@ -31,7 +31,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache cargo registry and build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -53,10 +53,10 @@ jobs:
     name: Interface tests
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -67,8 +67,7 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Install Playwright Chromium
-        run: npx playwright install chromium
-
+      # The UI tests drive the runner's installed Microsoft Edge (tests/ui.test.cjs), so no
+      # Playwright browser download is needed.
       - name: UI tests
         run: npm run test:ui
