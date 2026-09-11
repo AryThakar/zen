@@ -47,7 +47,7 @@ strip = "symbols"
 panic = "unwind"
 
 [dev-dependencies]
-axum = { version = "0.7.9", features = ["ws"] }
+axum = { version = "0.8.9", features = ["ws"] }
 
 [[bin]]
 name = "zen"
