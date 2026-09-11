@@ -1,0 +1,13 @@
+# LF everywhere, including Windows checkouts. The prompts in src/prompts are compiled in with
+# include_str!, and the talker prompt is a cached model prefix: a CRLF checkout would change
+# its bytes, and with them what the model is given.
+* text=auto eol=lf
+
+# Binary assets compiled into the executable or shown in the README.
+*.png   binary
+*.ico   binary
+*.woff2 binary
+
+# Generated lockfiles are reviewed as a whole, not line by line.
+Cargo.lock        -diff linguist-generated
+package-lock.json -diff linguist-generated

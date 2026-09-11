@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="description" content="A private voice conversation, powered by AI on your device." />
+  <title>Zen — Think out loud</title>
+  <link rel="icon" href="data:," />
+  <link rel="preload" href="/inter.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/styles.css" />
+  <script type="module" src="/client.mjs"></script>
+</head>
+<body>
+    <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+<symbol id="i-mic" viewBox="0 0 24 24">
+          <rect x="9" y="3" width="6" height="12" rx="3" />
+          <path d="M5.5 10v2a6.5 6.5 0 0 0 13 0v-2M12 18.5V22m-4 0h8" />
+        </symbol>
+        <symbol id="i-muted" viewBox="0 0 24 24">
+          <path
+            d="m3 3 18 18M9 9v3a3 3 0 0 0 5.2 2M9 5a3 3 0 0 1 6 1v4M5.5 10v2a6.5 6.5 0 0 0 11 4.7M18.5 10v2M12 18.5V22m-4 0h8"
+          />
+        </symbol>
+        <symbol id="i-stop" viewBox="0 0 24 24">
+          <rect x="6" y="6" width="12" height="12" rx="3.5" />
+        </symbol>
+<symbol id="i-sound" viewBox="0 0 24 24">
+          <path d="m11 5-5 4H3v6h3l5 4V5m4 4a5 5 0 0 1 0 6m3-9a9 9 0 0 1 0 12" />
+        </symbol>
+        <symbol id="i-chat" viewBox="0 0 24 24">
+          <path d="M20 11.5a8 8 0 0 1-8 8H4l1.5-4a8 8 0 1 1 14.5-4Z" />
+          <path d="M8 9h8m-8 4h5" />
+        </symbol>
+        <symbol id="i-close" viewBox="0 0 24 24">
+          <path d="m6 6 12 12M18 6 6 18" />
+        </symbol>
+        <symbol id="i-settings" viewBox="0 0 24 24">
+          <path d="M4 7h16M4 17h16" />
+          <circle cx="9" cy="7" r="3" />
+          <circle cx="16" cy="17" r="3" />
+        </symbol>
+        <symbol id="i-power" viewBox="0 0 24 24">
+          <path d="M12 3v9m-5-7a8 8 0 1 0 10 0" />
+        </symbol>
+      </defs>
+    </svg>
+
+
+  <header class="topbar">
+    <div class="brand" aria-label="Zen">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M15.399 3.666 A9 9 0 1 1 3.666 15.399 A8.4 8.4 0 0 0 15.399 3.666Z" fill="currentColor"/></svg>
+      <span class="brand-name">zen</span><span class="brand-tagline">A little space for you.</span>
+    </div>
+    <div class="header-actions">
+      <span id="connectionBadge" class="status-chip"><span class="status-dot"></span><span id="connectionLabel">On this device</span></span>
+      <button id="audioSettings" class="icon-button" aria-label="Settings" title="Settings"><svg><use href="#i-settings"/></svg></button>
+      <button id="disconnect" class="icon-button end-session" aria-label="End session" title="End session and release models" hidden><svg><use href="#i-power"/></svg></button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <section class="hero" aria-labelledby="heroTitle">
+      <p class="eyebrow"><span class="eyebrow-dot"></span><span id="sessionLabel">Private by nature</span></p>
+      <h1 id="heroTitle">A little space<br/><span>to think out loud.</span></h1>
+      <p class="lede">A thought, a question, a new perspective.<br/>Take the conversation wherever you need.</p>
+      <div class="hero-orb">
+        <div class="orb-stage" aria-hidden="true">
+          <div class="orb-halo"></div><div class="orb-fallback"></div>
+          <canvas id="orb"></canvas><div class="orb-shadow"></div>
+        </div>
+      </div>
+      <div id="orbState" class="orb-state" data-phase="idle" role="status" aria-live="polite"><span class="state-dot"></span><span id="stateLabel">Ready when you are</span></div>
+    </section>
+
+    <section class="console" aria-label="Conversation">
+      <div class="console-heading"><span class="eyebrow">In the moment</span><span class="local-label">LOCAL AI</span></div>
+      <div id="liveCaption" class="live-caption" aria-live="polite" aria-atomic="true">
+        <p id="captionSpeaker" class="caption-speaker">Your conversation starts here</p>
+        <p id="captionText" class="caption-text">What’s on your mind?</p>
+        <div class="caption-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div class="voice-controls" role="group" aria-label="Voice controls">
+        <button id="mic" class="mic-button" aria-pressed="false"><svg><use id="micIcon" href="#i-mic"/></svg><span id="micLabel">Start talking</span></button>
+        <button id="interrupt" class="icon-button" disabled aria-label="Stop reply" title="Stop reply"><svg><use href="#i-stop"/></svg></button>
+        <button id="sounds" class="icon-button" aria-pressed="true" aria-label="Sound cues" title="Sound cues"><svg><use href="#i-sound"/></svg></button>
+        <button id="history" class="icon-button" aria-expanded="false" aria-controls="transcriptPanel" aria-label="Show conversation" title="Show conversation"><svg><use href="#i-chat"/></svg></button>
+      </div>
+      <p id="micHint" class="mic-hint">Your microphone is off.</p>
+      <div class="composer-divider"><span>or put it into words</span></div>
+      <form id="textForm" class="composer">
+        <label for="text" class="sr-only">Message Zen</label>
+        <input id="text" type="text" maxlength="8192" placeholder="Type a thought…" autocomplete="off" />
+        <button id="sendText" type="submit" aria-label="Send message" title="Send message"><svg viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>
+      </form>
+      <p id="status" class="home-status" role="status" aria-live="polite" aria-atomic="true"></p>
+    </section>
+  </main>
+
+  <footer><span><span class="privacy-dot"></span>On your device. In the moment.</span><span>Conversations stay in memory · No cloud account</span></footer>
+
+  <dialog id="transcriptPanel" class="transcript-panel" aria-labelledby="historyTitle">
+    <div class="panel-heading"><div><p class="eyebrow">This session</p><h2 id="historyTitle">Your conversation</h2></div><button id="closeHistory" class="icon-button" aria-label="Close conversation"><svg><use href="#i-close"/></svg></button></div>
+    <div id="transcript" class="transcript" role="log" aria-live="polite" aria-relevant="additions text"><p class="transcript-empty">A fresh page. Say hello.</p></div>
+    <p class="panel-footnote">The last 40 entries, kept in memory. Only completed spoken phrases appear here.</p>
+  </dialog>
+
+  <dialog id="audioDialog" aria-labelledby="audioTitle">
+    <div class="panel-heading"><div><p class="eyebrow">Make it yours</p><h2 id="audioTitle">Settings</h2></div><button id="closeAudio" class="icon-button" aria-label="Close settings"><svg><use href="#i-close"/></svg></button></div>
+    <section class="settings-group" aria-labelledby="instructionsTitle">
+      <h3 id="instructionsTitle">Conversation instructions</h3>
+      <label class="sr-only" for="prompt">Instructions for this conversation</label>
+      <textarea id="prompt" rows="3" maxlength="8192" autocomplete="off" spellcheck="false" aria-describedby="promptNote promptCount" placeholder="For example: Keep your answers brief and help me explore ideas."></textarea>
+      <p id="promptNote" class="field-note">Applied to your next conversation. Leave blank for Zen’s default voice.</p>
+      <p id="promptCount" class="field-note" aria-live="polite"></p>
+      <button id="startFresh" class="button-secondary" type="button" disabled>Clear history &amp; start fresh</button>
+      <p class="field-note">Starts a new conversation with these instructions and keeps the models loaded. End the session to release all model state.</p>
+    </section>
+    <section class="settings-group" aria-labelledby="appearanceTitle">
+      <h3 id="appearanceTitle">Appearance</h3>
+      <div class="field">
+        <span id="themeLabel">Theme</span>
+        <div class="segmented" role="group" aria-labelledby="themeLabel">
+          <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+          <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+          <button type="button" data-theme-choice="dark" aria-pressed="false">Night</button>
+        </div>
+      </div>
+      <p class="field-note">System follows Windows. Your choice is remembered on this computer.</p>
+    </section>
+    <section class="settings-group" aria-labelledby="listeningTitle">
+      <h3 id="listeningTitle">Listening</h3>
+      <div class="field">
+        <span id="pauseLabel">Pause before Zen answers</span>
+        <div class="segmented" role="group" aria-labelledby="pauseLabel">
+          <button type="button" data-pause-mode="auto" aria-pressed="true">Automatic</button>
+          <button type="button" data-pause-mode="manual" aria-pressed="false">Set myself</button>
+        </div>
+      </div>
+      <div class="field" id="endpointField" hidden>
+        <label for="endpoint" class="sr-only">Pause length</label>
+        <input id="endpoint" type="range" min="450" max="2000" step="50" value="900" aria-describedby="endpointNote" />
+      </div>
+      <p id="endpointNote" class="field-note" aria-live="polite"></p>
+      <p class="field-note">Automatic learns how you pause. If a reply cuts you off and you carry straight on, Zen takes that as a sign to wait longer next time, and shortens again over turns where you finish cleanly.</p>
+    </section>
+    <section class="settings-group" aria-labelledby="audioDevicesTitle">
+      <h3 id="audioDevicesTitle">Audio devices</h3>
+      <div class="field"><label for="inputDevice">Microphone</label><select id="inputDevice"><option value="">System default</option></select></div>
+      <div class="field"><label for="outputDevice" id="outputLabel" hidden>Speaker</label><select id="outputDevice" hidden><option value="">System default</option></select></div>
+      <div id="audioFeatures" class="audio-features">Start your microphone to see its audio processing settings.</div>
+      <p id="audioNote" class="field-note">Devices and preferences are kept in memory for this session.</p>
+    </section>
+    <p class="settings-footer">Speech and replies are processed on this computer.</p>
+  </dialog>
+  <noscript>Zen needs JavaScript to run.</noscript>
+</body>
+</html>

@@ -1,0 +1,50 @@
+name: Bug report
+description: Something in Zen does not work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste private conversation content. Zen never writes transcripts to disk,
+        so a description of what you said is enough.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what Zen did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start Zen
+        2. Press Start talking
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: self-test
+    attributes:
+      label: Output of `zen.exe --self-test`
+      description: Run it from a terminal with Zen closed. It uses synthetic content only.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Zen version or commit
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Windows version, GPU and VRAM, system RAM
+      placeholder: Windows 11 24H2, RTX 3050 Laptop 4 GB, 16 GB
+    validations:
+      required: true
+  - type: input
+    id: audio
+    attributes:
+      label: Microphone and speaker / headset
+      description: Echo and interruption behaviour depend heavily on the audio devices.

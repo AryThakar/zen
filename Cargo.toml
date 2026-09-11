@@ -1,0 +1,53 @@
+[package]
+name = "zen"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Private, on-device voice assistant: local speech recognition, LLM and streaming speech synthesis behind one desktop window"
+license = "Apache-2.0"
+readme = "README.md"
+publish = false
+default-run = "zen"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "io-util", "sync", "signal", "fs", "net"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+futures-util = "0.3"
+ort = { version = "2.0.0-rc.13", features = ["ndarray"] }
+rubato = "5"
+libloading = "0.8"
+hound = "3"
+getrandom = "0.4"
+tauri = { version = "~2.11.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-notification = "2"
+tauri-plugin-single-instance = "2"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_UI_WindowsAndMessaging"] }
+
+# A shipped Zen is one file the user double-clicks, so the release build is tuned for size
+# and startup. Thin LTO rather than fat: it recovers most of the size and nearly all of the
+# speed, and a full link here costs half an hour, which is a bad trade on a binary that is
+# rebuilt often. `panic` stays at "unwind" - the session worker, the synthesis thread and
+# the attach task all rely on `catch_unwind` to contain a failing native library instead of
+# taking the window down with it.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = "symbols"
+panic = "unwind"
+
+[dev-dependencies]
+axum = { version = "0.7.9", features = ["ws"] }
+
+[[bin]]
+name = "zen"
+path = "src/bin/zen.rs"

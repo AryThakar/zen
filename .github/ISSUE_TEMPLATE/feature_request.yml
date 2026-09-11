@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest a change to how Zen listens, thinks or speaks
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and where does Zen get in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like instead
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Anything it must not break
+      description: Zen runs fully offline on a 4 GB GPU and stores no conversation content. Note any tension with those.

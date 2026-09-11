@@ -1,0 +1,19 @@
+/target/
+/data/
+/gen/schemas/
+/node_modules/
+*.log
+*.pem
+*.key
+
+# Runtime assets live in the installation root, never in the repository. These patterns stop
+# gigabytes of weights, native builds or a personal voice sample from being committed by
+# accident if the repository is ever used as the root.
+/bin/
+/lib/
+/model/
+*.gguf
+*.onnx
+*.dll
+*.exe
+*.wav

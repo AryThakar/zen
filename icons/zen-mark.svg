@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Zen">
+  <title>Zen</title>
+  <!--
+    A sphere read as light rather than as an outline: the full silhouette is only
+    implied by a hairline, and the mark itself is the lit crescent, thick where the
+    surface turns away and vanishing where it faces the light. It is the orb the
+    application is built around, reduced to the one thing that survives at 16px.
+  -->
+  <defs>
+    <linearGradient id="zen-mark-gradient" x1="4" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A5B4FC" />
+      <stop offset="0.55" stop-color="#6366F1" />
+      <stop offset="1" stop-color="#4338CA" />
+    </linearGradient>
+  </defs>
+  <circle cx="12" cy="12" r="9" fill="none" stroke="#6366F1" stroke-width="1.1" opacity="0.26" />
+  <path
+    d="M15.399 3.666 A9 9 0 1 1 3.666 15.399 A8.4 8.4 0 0 0 15.399 3.666 Z"
+    fill="url(#zen-mark-gradient)"
+  />
+</svg>

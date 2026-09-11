@@ -1,0 +1,12 @@
+{
+  "name": "zen-desktop-checks",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "test": "node --test tests/client.test.cjs tests/microphone.test.cjs tests/transport.test.cjs",
+    "test:ui": "node --test tests/ui.test.cjs",
+    "test:native": "node --test tests/native-smoke.cjs"
+  },
+  "devDependencies": { "playwright": "1.62.1" },
+  "engines": { "node": ">=22" }
+}
