@@ -52,7 +52,7 @@ a real spoken session and describe what you observed in the pull request.
 
 ## Code style
 
-- Every `.rs` file starts with `// SPDX-License-Identifier: Apache-2.0`.
+- Every `.rs` file starts with `// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`.
 - Each module opens with a `//!` comment explaining its role and the reasoning behind its
   design.
 - Comments explain **why**, not what. Prefer a clearer name or structure over a comment that
@@ -75,5 +75,6 @@ re-prefill on the next session, so keep edits deliberate.
 
 ## License
 
-By contributing, you agree that your contributions are licensed under the
-[Apache License 2.0](LICENSE).
+Zen is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). By contributing,
+you agree that your contribution is licensed under those same terms, and that AryThakar may
+also license it, as part of Zen, under other terms, including for commercial use.

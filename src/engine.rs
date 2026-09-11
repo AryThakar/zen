@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Resident E2B inference engine: one llama-server process, two slots, one file.
 //!
 //! Owns the physical facts of running the model: which slot a role runs in, how each slot's KV

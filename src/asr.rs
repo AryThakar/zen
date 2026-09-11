@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Speech to text: Qwen3-ASR through `crispasr.dll`, off the capture thread.
 //!
 //! The model is roughly 1.4 GB and runs on the CPU, which shapes the whole design:

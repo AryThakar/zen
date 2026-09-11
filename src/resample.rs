@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Stateful, band-limited rate conversion with an explicit tail drain.
 use crate::audio::AudioError;
 use rubato::{audioadapter_buffers::direct::InterleavedSlice, Resampler};

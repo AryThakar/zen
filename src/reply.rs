@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Text between the recogniser and the speaker.
 //!
 //! Three jobs, all of them text-in text-out and none of them touching audio or the network, so

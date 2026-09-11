@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Whole-turn flows through the public `Session` API, with no models or audio devices:
 //! recognition, generation and playback acknowledgements are fed in by hand so each ordering
 //! and interruption can be driven deterministically.

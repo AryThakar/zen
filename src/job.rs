@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Tie child processes to this one's lifetime.
 //!
 //! `llama-server` holds gigabytes of graphics memory and loopback port 8740. Dropping its

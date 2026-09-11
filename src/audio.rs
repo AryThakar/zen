@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Capture front-end: 16 kHz microphone samples to speech segments.
 //!
 //! The chain, and why it is in this order:

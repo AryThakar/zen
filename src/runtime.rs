@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Process entry: argument handling, the native worker branch, and launching the app.
 //!
 //! Zen is one executable with three ways in. Re-executed as `--native-worker` it hosts an

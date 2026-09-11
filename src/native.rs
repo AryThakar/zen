@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Separate native libraries by process. Framed PCM uses authenticated loopback sockets;
 //! Native output is discarded for privacy. A worker exits when its owner disconnects.
 use crate::{

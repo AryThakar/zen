@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Speech synthesis: Qwen-TTS through `qwen.dll`.
 //!
 //! Loaded at runtime rather than linked, because no import library ships with the DLL - the same

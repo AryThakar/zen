@@ -1,7 +1,8 @@
 # Third-party notices
 
-Zen's own source code is licensed under the [Apache License 2.0](LICENSE). It builds on the
-work below, which remains under its authors' licenses.
+Zen's own source code is copyright AryThakar and licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE). It builds on the work below, which remains
+under its authors' licenses and is not affected by Zen's license.
 
 ## Compiled into `zen.exe`
 

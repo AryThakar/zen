@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Pure turn orchestration. Every asynchronous job keeps the generation issued at capture.
 use crate::{
     conversation::{Conversation, SpokenReply},

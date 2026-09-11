@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! The desktop application: one window, one embedded webview, one engine, one process.
 //!
 //! The interface is compiled into this binary and loaded from a private app origin, so it

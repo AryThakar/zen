@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Zen: a private voice assistant that runs speech recognition, a language model and
 //! streaming speech synthesis on the local machine, behind one desktop window.
 //!

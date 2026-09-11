@@ -1,6 +1,7 @@
 {
   "name": "zen-desktop-checks",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "version": "0.1.0",
   "scripts": {
     "test": "node --test tests/client.test.cjs tests/microphone.test.cjs tests/transport.test.cjs",

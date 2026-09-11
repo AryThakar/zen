@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Cancellable synthesis on a worker thread. Playback and its acknowledgements belong to
 //! the webview, which owns the output device.
 use crate::{session::Generation, tts::Synthesizer};

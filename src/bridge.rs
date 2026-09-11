@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! In-process bridge between the embedded webview and the shared Session state machine.
 //!
 //! The webview and the engine are one process, so nothing here is addressed, paired or

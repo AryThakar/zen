@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Turn-taking: the state machine that makes the pipeline feel like a conversation.
 //!
 //! Everything below this is mechanism - audio in, text out, audio back. This module decides

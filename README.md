@@ -14,7 +14,7 @@ desktop window. Nothing you say, hear or type leaves the machine or is written t
 ![Rust 1.91+](https://img.shields.io/badge/rust-1.91%2B-CE422B)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB)
 ![GPU: 4 GB VRAM](https://img.shields.io/badge/GPU-4%20GB%20VRAM-76B900)
-![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
+![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-orange)
 
 <img src="docs/screenshots/speaking-light.png" width="860" alt="Zen speaking a reply: the glass orb deforms with the reply audio and the caption shows the phrase being spoken" />
 
@@ -303,5 +303,16 @@ and Qwen3-TTS, [Silero VAD](https://github.com/snakers4/silero-vad),
 
 ## License
 
-Zen is licensed under the [Apache License 2.0](LICENSE). The models and native libraries it
-runs are separate works under their own licenses.
+Zen was created by **[AryThakar](https://github.com/AryThakar)** and is source-available
+under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+
+- **You may** use, study, modify and share Zen for any noncommercial purpose, such as personal
+  use, study, research, hobby projects, or use by a charity, school or public body.
+- **You must keep the credit.** Anyone who shares Zen, modified or not, must pass on the
+  license and the `Required Notice: Copyright 2026 AryThakar` line at the top of
+  [LICENSE](LICENSE).
+- **Commercial use is not licensed.** To use Zen in a product, a paid service or other
+  commercial work, contact [AryThakar](https://github.com/AryThakar) for permission.
+
+The models and native libraries Zen runs are separate works under their own licenses. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
