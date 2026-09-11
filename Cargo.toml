@@ -30,7 +30,7 @@ tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
-webview2-com = "0.38"
+webview2-com = "0.39"
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_UI_WindowsAndMessaging"] }
 
 # A shipped Zen is one file the user double-clicks, so the release build is tuned for size
