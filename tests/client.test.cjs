@@ -84,6 +84,7 @@ test("capture sanitizes non-finite hardware samples", () => {
 function audioGraph() {
   const sent = [],
     sources = [],
+    gains = [],
     phrases = [];
   const node = () => ({
     connect() {
@@ -102,15 +103,27 @@ function audioGraph() {
         data.fill(0);
       },
     }),
-    createGain: () => ({
-      ...node(),
-      gain: {
-        cancelScheduledValues() {},
-        setTargetAtTime() {},
-        setValueAtTime() {},
-        linearRampToValueAtTime() {},
-      },
-    }),
+    createGain: () => {
+      // Ramps are recorded: a phrase ending on silence is a scheduled ramp to zero, and
+      // nothing else in the graph shows whether it was scheduled.
+      const ramps = [];
+      const gainNode = {
+        ...node(),
+        gain: {
+          ramps,
+          cancelScheduledValues() {},
+          setTargetAtTime() {},
+          setValueAtTime(value, at) {
+            ramps.push({ value, at, kind: "set" });
+          },
+          linearRampToValueAtTime(value, at) {
+            ramps.push({ value, at, kind: "ramp" });
+          },
+        },
+      };
+      gains.push(gainNode);
+      return gainNode;
+    },
     getOutputTimestamp() {
       return { contextTime: this.deviceTime };
     },
@@ -130,7 +143,7 @@ function audioGraph() {
       return source;
     },
   };
-  return { audio, sent, sources, phrases };
+  return { audio, sent, sources, gains, phrases };
 }
 
 async function playback() {
@@ -190,8 +203,8 @@ test("a chunk arriving before playback runs out stays contiguous even with littl
       const previousEnd = sources[0].at + sources[0].buffer.duration;
       audio.currentTime = previousEnd - headroom;
       player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: new Uint8Array(12000) });
-      assert.equal(sources[1].at, headroom > 0.006 ? previousEnd - 0.006 : previousEnd,
-        "an on-time chunk must not insert silence");
+      assert.equal(sources[1].at, previousEnd,
+        "an on-time chunk must neither insert silence nor overlap what came before");
     } finally { player.dispose(); }
   }
 });
@@ -221,23 +234,52 @@ test("the measured short first codec block tolerates a 20 ms delivery delay", as
       player.queue({ generation: 3, phrase: 1, sequence: index + 1, pcm: new Uint8Array(samples * 2) });
     }
     for (let i = 1; i < sources.length; i++)
-      assert.equal(sources[i].at, sources[i - 1].at + sources[i - 1].buffer.duration - 0.006,
+      assert.equal(sources[i].at, sources[i - 1].at + sources[i - 1].buffer.duration,
         "short initial codec chunks need enough startup headroom for IPC jitter");
   } finally { player.dispose(); }
 });
 
-test("codec blocks overlap briefly at their seam instead of clicking", async () => {
+test("codec blocks of one phrase are joined sample to sample, never overlapped", async () => {
+  // They are consecutive samples of a single synthesis, so there is no seam to hide. Sliding
+  // each block back to crossfade it cost six milliseconds of speech at every join - 2.3% of
+  // everything spoken - and left the phrase ending earlier than the pause scheduled after it.
   const { player, audio, sources } = await playback();
   try {
     player.begin({ generation: 3, phrase: 1, text: "A smooth sentence." });
-    player.queue({ generation: 3, phrase: 1, sequence: 1, pcm: new Uint8Array(12000) });
-    audio.currentTime = 0.15;
-    const previousEnd = sources[0].at + sources[0].buffer.duration;
-    player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: new Uint8Array(12000) });
+    let played = 0;
+    for (let sequence = 1; sequence <= 6; sequence++) {
+      player.queue({ generation: 3, phrase: 1, sequence, pcm: new Uint8Array(12000) });
+      audio.currentTime = 0.15 * sequence;
+      played += sources[sequence - 1].buffer.duration;
+    }
+    for (let i = 1; i < sources.length; i++)
+      assert.equal(
+        sources[i].at,
+        sources[i - 1].at + sources[i - 1].buffer.duration,
+        "block " + i + " must start exactly where the one before it ends",
+      );
+    const last = sources[sources.length - 1];
     assert.equal(
-      sources[1].at,
-      previousEnd - 0.006,
-      "adjacent codec blocks should receive a short equal-power overlap",
+      Number((last.at + last.buffer.duration - sources[0].at).toFixed(6)),
+      Number(played.toFixed(6)),
+      "the phrase must occupy exactly as long as the audio in it",
+    );
+  } finally { player.dispose(); }
+});
+
+test("a phrase ends on silence rather than on whatever amplitude synthesis stopped at", async () => {
+  // Synthesis stops when it runs out of text, sometimes with the waveform still at a fifth of
+  // full scale. Played as-is that edge is heard as the last sound being clipped off.
+  const { player, audio, gains } = await playback();
+  try {
+    player.begin({ generation: 3, phrase: 1, text: "Cut off mid" });
+    player.queue({ generation: 3, phrase: 1, sequence: 1, pcm: new Uint8Array(12000) });
+    audio.currentTime = 0.01;
+    player.end({ generation: 3, phrase: 1, pause_ms: 0 });
+    const ramps = gains[gains.length - 1].gain.ramps;
+    assert(
+      ramps.some((ramp) => ramp.kind === "ramp" && ramp.value === 0),
+      "the final block must be ramped down to silence, got " + JSON.stringify(ramps),
     );
   } finally { player.dispose(); }
 });

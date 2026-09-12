@@ -4,7 +4,9 @@ export class AudioPlayback {
   // Cover that initial deficit plus a few IPC/render ticks before starting the device.
   static STARTUP_BUFFER = 0.1;
   // A short equal-power overlap removes clicks and metallic seams between codec blocks.
-  static SEAM_FADE = 0.006;
+  /// Ramped off the end of a phrase. Synthesis stops when it runs out of text, sometimes with
+  /// the waveform still at a fifth of full scale, which is heard as the last sound being cut.
+  static PHRASE_FADE = 0.006;
 
   constructor(context, send, onPhrase = () => {}) {
     this.context = context;
@@ -101,39 +103,39 @@ export class AudioPlayback {
     // milliseconds remain inserts silence into an otherwise contiguous waveform.
     if (phrase.started && this.next < now)
       this.jitter = Math.min(0.16, this.jitter + 0.015);
-    const blend = phrase.started && this.lastPhrase === event.phrase
-      && this.next > now + AudioPlayback.SEAM_FADE;
-    const at = blend
-      ? this.next - AudioPlayback.SEAM_FADE
+    // Blocks of one phrase are consecutive samples of a single synthesis, so they meet at the
+    // sample and need no crossfade. Overlapping them to hide a seam that was never there threw
+    // away six milliseconds of real audio at every join - 2.3% of everything spoken - and pulled
+    // the end of each phrase earlier than the pause scheduled after it.
+    const contiguous =
+      phrase.started && this.lastPhrase === event.phrase && this.next > now;
+    const at = contiguous
+      ? this.next
       : Math.max(now + (this.next > now ? 0 : this.jitter), this.next);
     const end = at + buffer.duration;
     this.next = end;
-    if (blend && this.lastItem) {
-      const fadeStart = at;
-      const fadeEnd = at + AudioPlayback.SEAM_FADE;
-      this.lastItem.gain.gain.cancelScheduledValues(fadeStart);
-      this.lastItem.gain.gain.setValueAtTime(1, fadeStart);
-      this.lastItem.gain.gain.linearRampToValueAtTime(0, fadeEnd);
-      gain.gain.setValueAtTime(0, fadeStart);
-      gain.gain.linearRampToValueAtTime(1, fadeEnd);
+    if (!phrase.started) {
+      phrase.started = true;
+      this.markers.push({
+        at,
+        type: "playback_started",
+        phrase: event.phrase,
+        text: phrase.text,
+        epoch: this.epoch,
+      });
+    }
+    if (contiguous) {
+      gain.gain.setValueAtTime(1, at);
     } else {
-      if (!phrase.started) {
-        phrase.started = true;
-        this.markers.push({
-          at,
-          type: "playback_started",
-          phrase: event.phrase,
-          text: phrase.text,
-          epoch: this.epoch,
-        });
-      }
+      // Starting a phrase, or resuming after an underrun: the waveform jumps here, so it needs
+      // a ramp to avoid a click.
       gain.gain.setValueAtTime(0, at);
       gain.gain.linearRampToValueAtTime(
         1,
         at + Math.min(0.004, buffer.duration / 2),
       );
     }
-    const item = { source, gain, ended: false };
+    const item = { source, gain, at, end, ended: false };
     const epoch = this.epoch;
     this.sources.add(item);
     this.lastItem = item;
@@ -162,6 +164,17 @@ export class AudioPlayback {
     const phrase = this.phrases.get(event.phrase);
     if (!phrase?.started || phrase.ended) throw new Error("Invalid or duplicate voice phrase ending.");
     phrase.ended = true;
+    // End on silence. Without this the phrase stops on an edge and the last sound is heard
+    // clipped - measured at up to a fifth of full scale on the final sample.
+    const item = this.lastItem;
+    if (item && !item.ended && this.next > this.context.currentTime) {
+      const from = Math.max(item.at, this.next - AudioPlayback.PHRASE_FADE);
+      if (from > this.context.currentTime) {
+        item.gain.gain.cancelScheduledValues(from);
+        item.gain.gain.setValueAtTime(1, from);
+        item.gain.gain.linearRampToValueAtTime(0, this.next);
+      }
+    }
     // The pause starts when audio ends, even if this message reaches the page later.
     this.next =
       this.next +

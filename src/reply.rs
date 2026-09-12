@@ -745,11 +745,15 @@ pub fn pause_after_ms(text: &str) -> u64 {
     // small amount *on top* of that, not the whole pause. Set as if from scratch they stack
     // with what was synthesised and the reply drags between sentences.
     /// Silence after a completed sentence.
-    const SENTENCE_MS: u64 = 110;
+    ///
+    /// Measured, synthesis leaves 0-80 ms after the last sound and 70-130 ms before the first
+    /// of the next phrase, so roughly 150 ms arrives for free. Conversational speech leaves
+    /// something closer to half a second between sentences; this is the rest of it.
+    const SENTENCE_MS: u64 = 280;
     /// After a semicolon or colon: a real break, but the thought continues.
-    const CLAUSE_MS: u64 = 70;
+    const CLAUSE_MS: u64 = 160;
     /// After a comma.
-    const WEAK_MS: u64 = 40;
+    const WEAK_MS: u64 = 90;
     /// A phrase the length limit cut mid-thought is not a pause at all. Inserting silence
     /// here puts a gap in the middle of a sentence, which is the one place it cannot belong.
     const UNFINISHED_MS: u64 = 0;
