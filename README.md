@@ -35,7 +35,7 @@ Everything runs on your own GPU and CPU:
 | Voice activity | Silero VAD | ONNX Runtime, compiled into the app | CPU |
 | Speech to text | Qwen3-ASR 1.7B (Q4_K) | CrispASR, isolated worker process | CPU |
 | Transcript repair and reply | Gemma 4 E2B (QAT, UD-Q4_K_XL) with an MTP drafter | llama.cpp `llama-server`, supervised | GPU |
-| Text to speech | Qwen3-TTS 12Hz 0.6B Base (Q4_K_M), cloned from a reference clip | qwentts.cpp, isolated worker process | GPU |
+| Text to speech | Qwen3-TTS 12Hz 0.6B Base (Q8_0, or Q4_K_M), cloned from a reference clip | qwentts.cpp, isolated worker process | GPU |
 
 The application is Rust on [Tauri 2](https://tauri.app/). The interface is hand-written HTML,
 CSS and JavaScript in WebView2, with no framework or bundler, and is compiled into the
@@ -203,20 +203,31 @@ conversation memory, both prompts and cancellation. A healthy install ends with
   second engine.
 - **End session** (the power button) releases the models and all conversation state.
 
-Zen's default persona lives in [`src/prompts/talker.txt`](src/prompts/talker.txt) and is
-compiled in. It speaks as a warm, direct woman, always replies in English, and says plainly
-that it cannot set timers, browse or control devices rather than pretending to. The shipped
-prompt addresses its user by name (the author's), and
-[`src/prompts/filter.txt`](src/prompts/filter.txt) expects that name when repairing
-transcripts. Change the name in both files for your own build, or use **Conversation
-instructions** in Settings for a single session.
+The system prompt is two compiled-in files, joined in that order:
+
+- [`src/prompts/core.txt`](src/prompts/core.txt) — the voice rules. What makes a reply
+  speakable rather than readable: no lists or markdown, numbers as words, and that a request
+  outranks brevity, so Zen never cuts an answer short for being long to say.
+- [`src/prompts/talker.txt`](src/prompts/talker.txt) — the persona, and **the only part
+  replaced** by `--system-prompt` or **Conversation instructions** in Settings. Custom
+  instructions cannot drop the voice rules, because every path that sets them goes through the
+  same composition.
+
+The shipped persona speaks as a warm, direct woman, always replies in English, and says plainly
+that it cannot set timers, browse or control devices rather than pretending to. It addresses
+its user by name (the author's), and [`src/prompts/filter.txt`](src/prompts/filter.txt)
+expects that name when repairing transcripts. Change the name in both files for your own build.
+
+A session opens with a spoken greeting chosen from the local clock. It is not recorded in the
+conversation — nothing was asked and the model did not say it — and you can talk over it like
+anything else.
 
 ### Command-line options
 
 | Option | Default / behaviour |
 | --- | --- |
 | `--root PATH` | Installation root holding `bin`, `lib` and `model`; found beside the executable by default |
-| `--system-prompt TEXT` | Override the default talker instructions, up to 8192 UTF-8 bytes |
+| `--system-prompt TEXT` | Replace the persona, up to 8192 UTF-8 bytes. The voice rules are kept |
 | `--system-prompt-file PATH` | Read the instructions from a UTF-8 file |
 | `--endpoint-ms N` | Fix the end-of-turn pause, 450–2000 ms. Omitted, Zen learns it from how you pause |
 | `--reply-tokens N` | Reply budget, 64–1024 (default 512), also reserved in the context budget |
@@ -280,7 +291,7 @@ src/
 ├── resample.rs         band-limited rate conversion
 ├── engine.rs           llama-server supervision, slots and streaming client
 ├── native.rs, job.rs   isolated worker processes and the job object
-├── prompts/            talker and filter instructions, compiled in
+├── prompts/            voice rules, persona and filter instructions, compiled in
 └── client/             interface, microphone worklet, playback scheduler, orb shader
 tests/                  Rust flow tests and Node interface tests
 ```

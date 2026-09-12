@@ -56,8 +56,11 @@ scheduled:
 | 0 | **Filter**: repairs the transcript and translates it into English | Stateless: each request stands alone |
 | 1 | **Talker**: writes the spoken reply | Stateful: the system prompt is a stable, cached prefix |
 
-The talker prompt (`src/prompts/talker.txt`) is compiled in and byte-identical on every run,
-which lets the server reuse its cached prefix instead of reprocessing it. Both slots get 8,192
+The talker prompt is compiled in and byte-identical on every run, which lets the server reuse
+its cached prefix instead of reprocessing it. It is composed from two files: the voice rules
+that keep a reply speakable (`src/prompts/core.txt`) followed by the persona
+(`src/prompts/talker.txt`). Only the persona is replaceable, so instructions typed into
+Settings cannot drop the rules underneath them. Both slots get 8,192
 tokens. Every layer is pinned to the GPU (`--n-gpu-layers 99` with `--fit off`, so auto-fit
 cannot quietly move layers back to the CPU), the KV cache is q4_0 with a full sliding window,
 and a Gemma 4 Multi-Token Prediction drafter proposes up to three tokens ahead. Thinking is
@@ -95,6 +98,17 @@ Measured on the reference machine, the LLM uses 1.6 GB of VRAM and decodes at 81
   for transcription while the turn stays open, so most of the utterance is already recognised
   when the turn ends. `src/input.rs` assembles chunks in capture order and finalises the
   utterance exactly once.
+- **A turn may run for a minute** before the cap ends it, and even then it ends at the next
+  real gap rather than mid-word, because a sentence cut in half is lost entirely: the speaker
+  carries straight on, that continuation opens a new turn, and the half already captured goes
+  with the utterance it belonged to. Speech that never pauses at all is stopped at twice the
+  cap, which is a television or an open microphone rather than a person.
+- **Recognition costs about 630 ms per second of speech** on the reference machine, so a
+  thirty-four second question is still being recognised for roughly ten seconds after the
+  speaker stops. Speaking inside that window continues the same question instead of starting
+  a new one - nothing has been said back yet, so there is nothing to interrupt - and a full
+  recognition queue ends the turn and answers from what was heard rather than reporting an
+  error.
 
 ### The end-of-turn pause is measured, not configured
 
