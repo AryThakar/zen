@@ -322,7 +322,7 @@ impl Default for SegmenterConfig {
             resume_window_frames: Self::frames_for_ms(1_000), // ~1 s
             minimum_frames: Self::frames_for_ms(300), // ~300 ms
             maximum_frames: Self::frames_for_ms(20_000), // 20 s
-            max_turn_frames: Self::frames_for_ms(30_000), // 30 s
+            max_turn_frames: Self::frames_for_ms(60_000), // 60 s
         }
     }
 }
@@ -1566,6 +1566,19 @@ mod tests {
             unreachable!()
         };
         assert_eq!(segmenter.config.endpoint.frames(), floor_frames);
+    }
+
+    #[test]
+    fn the_turn_cap_is_longer_than_anyone_actually_speaks_for() {
+        // The cap exists for a microphone left open, not for a long question. Set it near the
+        // length of real speech and a genuine question gets split in two, with the speaker's
+        // own second half interrupting the answer to the first.
+        let config = SegmenterConfig::default();
+        let cap_ms = config.max_turn_frames * 36;
+        assert!(
+            cap_ms >= 55_000,
+            "a turn is cut off after {cap_ms} ms, which a real question can reach"
+        );
     }
 
     #[test]
