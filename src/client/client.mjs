@@ -276,7 +276,18 @@ export class VoiceClient {
 
   async audio() {
     if (!this.context) {
-      const context = new AudioContext({ latencyHint: "interactive" });
+      // Matching the synthesiser's rate keeps playback free of per-block resampling; the
+      // device resamples once, on the continuous output stream, instead of once per block.
+      // Capture decimates from whatever rate the context runs at, so it does not mind.
+      let context;
+      try {
+        context = new AudioContext({
+          latencyHint: "interactive",
+          sampleRate: AudioPlayback.RATE,
+        });
+      } catch {
+        context = new AudioContext({ latencyHint: "interactive" });
+      }
       this.context = context;
       this.sound = new Soundscape(context);
       this.sound.enabled = this.soundEnabled;

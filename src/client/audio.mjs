@@ -4,6 +4,10 @@ export class AudioPlayback {
   // Cover that initial deficit plus a few IPC/render ticks before starting the device.
   static STARTUP_BUFFER = 0.1;
   // A short equal-power overlap removes clicks and metallic seams between codec blocks.
+  /// The rate synthesis produces. The context is asked for the same rate: at any other, every
+  /// block is resampled on its own with no filter state carried from the block before it, and
+  /// each join is left with a transient - about two hundred of them in a conversation.
+  static RATE = 24000;
   /// Ramped off the end of a phrase. Synthesis stops when it runs out of text, sometimes with
   /// the waveform still at a fifth of full scale, which is heard as the last sound being cut.
   static PHRASE_FADE = 0.006;
@@ -89,7 +93,11 @@ export class AudioPlayback {
       this.markers.length > 1024
     )
       throw new Error("Voice playback exceeded its buffer.");
-    const buffer = this.context.createBuffer(1, bytes.length / 2, 24000);
+    const buffer = this.context.createBuffer(
+      1,
+      bytes.length / 2,
+      AudioPlayback.RATE,
+    );
     const data = buffer.getChannelData(0),
       view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     for (let i = 0; i < data.length; i++)
