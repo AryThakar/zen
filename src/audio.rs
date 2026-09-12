@@ -482,8 +482,8 @@ impl Segmenter {
         // Past the cap, end on the next real gap rather than mid-word. Cutting a sentence in
         // half loses it entirely: the speaker carries straight on, that continuation opens a
         // new turn, and the half already captured is dropped with the utterance it belonged to.
-        // A person pauses within a second or two of passing thirty seconds; a television does
-        // not, which is what the hard stop below is for.
+        // A person pauses within a second or two of passing a minute; a television does not,
+        // which is what the hard stop below is for.
         let endpoint = if self.turn_frames >= self.config.max_turn_frames {
             self.config
                 .endpoint

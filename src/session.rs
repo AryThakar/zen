@@ -717,7 +717,7 @@ mod tests {
         session.on_speech(0);
         session.on_turn_ended(100);
         let stale = session.generation();
-        let tasks = session.poll(60_100);
+        let tasks = session.poll(120_100);
         assert!(tasks.iter().any(|task| matches!(task, Task::Cancel { .. })));
         assert!(!session.is_current(stale));
     }

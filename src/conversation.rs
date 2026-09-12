@@ -210,8 +210,6 @@ impl WindowBudget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WindowChange {
     pub evicted_turns: usize,
-    /// True when the prompt prefix moved, so the cached KV is dead this turn.
-    pub prefix_invalidated: bool,
 }
 
 /// The reply slot's rolling conversation.
@@ -350,7 +348,6 @@ impl Conversation {
         }
         WindowChange {
             evicted_turns: evicted,
-            prefix_invalidated: evicted > 0,
         }
     }
 
@@ -476,7 +473,6 @@ mod tests {
         let mut chat = conversation();
         let change = chat.record_user("hello");
         assert_eq!(change, WindowChange::default());
-        assert!(!change.prefix_invalidated);
     }
 
     #[test]
@@ -528,7 +524,7 @@ mod tests {
         let long = "word ".repeat(300);
         let mut saw_invalidation = false;
         for _ in 0..30 {
-            saw_invalidation |= chat.record_user(long.clone()).prefix_invalidated;
+            saw_invalidation |= chat.record_user(long.clone()).evicted_turns > 0;
         }
         assert!(saw_invalidation);
     }

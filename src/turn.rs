@@ -99,11 +99,14 @@ pub struct TurnTimeouts {
     pub listening_ms: u64,
     /// How long speech-to-text may take before the turn is abandoned.
     ///
-    /// A backstop, not the working deadline. Recognition costs roughly 450 ms plus 240 ms per
-    /// second of speech, so a single number here is really a limit on how long anyone may
-    /// talk. The host applies a deadline sized from the audio actually captured, and answers
-    /// from the words recognised so far rather than discarding the turn; this only catches
-    /// the case where nothing was recognised at all.
+    /// A backstop, not the working deadline, and it has to outlast one: the host applies a
+    /// deadline sized from the audio actually captured and answers from the words recognised
+    /// so far, where this discards the turn outright. It only catches the case where nothing
+    /// was recognised at all.
+    ///
+    /// Measured on the reference machine, recognition costs about 300 ms plus 630 ms for every
+    /// second of speech - 1.0 s of audio in 763 ms, 7.3 s in 3.8 s, 33.9 s in 21.3 s - and a
+    /// turn may hold three minutes of it, so this sits well clear of the working deadline.
     pub transcribe_ms: u64,
     /// How long the model may take before the turn is abandoned.
     pub thinking_ms: u64,
@@ -115,7 +118,7 @@ impl Default for TurnTimeouts {
     fn default() -> Self {
         Self {
             listening_ms: 15_000,
-            transcribe_ms: 60_000,
+            transcribe_ms: 120_000,
             thinking_ms: 30_000,
             speaking_ms: 120_000,
         }
@@ -432,10 +435,10 @@ mod tests {
         // deadline is the host's, sized from the audio captured, and it answers from a partial
         // transcript rather than discarding what was said.
         assert!(
-            machine.poll(30_000).is_empty(),
-            "a long turn is not a stall"
+            machine.poll(60_000).is_empty(),
+            "a long turn is not a stall, and this has to outlast the host deadline it backs up"
         );
-        machine.poll(60_100);
+        machine.poll(120_100);
         assert_eq!(machine.phase(), Phase::Listening);
         assert_eq!(machine.timeouts_hit(), 1);
     }

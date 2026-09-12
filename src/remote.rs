@@ -89,15 +89,20 @@ fn greeting_line() -> String {
 
 /// How long recognition may take for the audio just captured.
 ///
-/// Recognition costs roughly 450 ms plus 240 ms per second of speech, so a fixed budget is
-/// really a cap on how long anyone may talk: say four sentences and the turn is thrown away
-/// for being slow, having already been heard. Sized from the audio instead, generously - this
-/// is a guard against a stuck recogniser, not a performance target.
+/// A fixed budget is really a cap on how long anyone may talk: say four sentences and the turn
+/// is thrown away for being slow, having already been heard. Sized from the audio instead, and
+/// generously - this guards against a recogniser that has stopped making progress, it is not a
+/// performance target.
+///
+/// Measured on the reference machine, recognition costs about 300 ms plus 630 ms for every
+/// second of speech: 1.0 s of audio in 763 ms, 7.3 s in 3.8 s, 33.9 s in 21.3 s. Most of that
+/// is already paid while the speaker is still talking, since each pause hands off a piece, so
+/// a full second of budget per second of audio leaves real headroom for the tail.
 fn transcribe_budget_ms(audio_ms: usize) -> u64 {
     const FIXED_MS: u64 = 3_000;
-    const PER_SECOND_MS: u64 = 400;
+    const PER_SECOND_MS: u64 = 1_000;
     let budget = FIXED_MS + (audio_ms as u64) * PER_SECOND_MS / 1_000;
-    budget.clamp(5_000, 45_000)
+    budget.clamp(5_000, 60_000)
 }
 
 pub(crate) async fn run(
@@ -493,7 +498,8 @@ impl RemoteRunner {
                 // If recognition of the previous utterance is still outstanding, the session
                 // keeps the same turn, so the jobs already in flight have to be kept with it.
                 let continuing = self.session.phase() == Phase::Transcribing
-                    && self.input.generation() == Some(self.session.generation());
+                    && self.input.generation() == Some(self.session.generation())
+                    && !self.input.is_full();
                 let tasks = self.session.on_speech(self.now());
                 self.dispatch(tasks);
                 if continuing {
@@ -506,26 +512,37 @@ impl RemoteRunner {
                 }
             }
             CaptureEvent::Segment(segment) => {
-                let ms = segment.duration_ms();
-                if self.input.generation().is_none() {
+                // No turn is open, or this one has already been closed off - by its endpoint, or
+                // because it could take no more. Either way this audio belongs to the next turn.
+                if self.input.generation().is_none() || self.input.is_closed() {
                     return Ok(());
                 }
-                let sequence = self
-                    .asr
-                    .submit_cancellable(segment, self.cancelled.clone())?;
-                self.input.add(sequence, ms)?;
+                let ms = segment.duration_ms();
+                let accepted = match self.asr.submit_cancellable(segment, self.cancelled.clone()) {
+                    Ok(sequence) => self.input.add(sequence, ms).is_ok(),
+                    Err(_) => false,
+                };
+                if !accepted {
+                    // Recognition is behind, or the turn has outgrown what one utterance holds.
+                    // Neither is invalid input, and neither is worth what reporting it as an
+                    // error costs: the turn, including every word already recognised. End it
+                    // here instead and answer from the pieces that were accepted.
+                    self.end_turn();
+                }
             }
-            CaptureEvent::Ended => {
-                self.input.close();
-                self.transcribe_deadline =
-                    Some(self.now() + transcribe_budget_ms(self.input.audio_ms()));
-                let tasks = self.session.on_turn_ended(self.now());
-                self.dispatch(tasks);
-                self.finalize();
-            }
+            CaptureEvent::Ended => self.end_turn(),
         }
         Ok(())
     }
+    /// Close the utterance to further audio and answer from what it holds.
+    fn end_turn(&mut self) {
+        self.input.close();
+        self.transcribe_deadline = Some(self.now() + transcribe_budget_ms(self.input.audio_ms()));
+        let tasks = self.session.on_turn_ended(self.now());
+        self.dispatch(tasks);
+        self.finalize();
+    }
+
     fn finalize(&mut self) {
         if let Some((g, text)) = self.input.take_ready() {
             self.transcribe_deadline = None;
@@ -776,13 +793,30 @@ mod tests {
 
     #[test]
     fn the_recognition_budget_follows_the_audio() {
-        // Short turns get the floor, long ones get room, and nothing gets forever.
+        // Short turns get the floor, long ones get room, and nothing waits forever.
         assert_eq!(transcribe_budget_ms(0), 5_000);
         assert_eq!(transcribe_budget_ms(2_000), 5_000);
-        assert_eq!(transcribe_budget_ms(30_000), 15_000);
-        assert_eq!(transcribe_budget_ms(180_000), 45_000);
-        // The flat ten seconds this replaced: recognising a forty-second turn costs about ten,
-        // which is exactly where a turn used to be thrown away for being slow.
-        assert!(transcribe_budget_ms(40_000) > 10_000);
+        assert_eq!(transcribe_budget_ms(30_000), 33_000);
+        assert_eq!(transcribe_budget_ms(180_000), 60_000);
+    }
+
+    #[test]
+    fn the_budget_clears_what_recognition_actually_costs() {
+        // Measured on the reference machine: about 300 ms fixed and 630 ms for every second of
+        // speech. This budget exists to catch a recogniser that has stopped making progress, so
+        // it has to sit clear of one that is merely working - and the earlier figure it was
+        // sized from, 240 ms per second, was optimistic by a factor of two and a half.
+        //
+        // Past about a minute and a half of speech the ceiling binds and the budget is shorter
+        // than a from-scratch recognition. That is deliberate: by then the pieces captured at
+        // each pause have been coming back for minutes, and answering from them beats silence.
+        for seconds in [1_u64, 5, 10, 20, 40, 57] {
+            let measured = 300 + 630 * seconds;
+            let budget = transcribe_budget_ms(seconds as usize * 1_000);
+            assert!(
+                budget > measured,
+                "{seconds} s of speech costs about {measured} ms to recognise, budget is {budget} ms"
+            );
+        }
     }
 }

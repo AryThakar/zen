@@ -3,6 +3,12 @@
 use crate::session::Generation;
 use std::collections::BTreeMap;
 
+/// Recognition jobs one utterance may hold.
+const MAX_PIECES: usize = 128;
+/// Audio one utterance may hold. Three minutes is far past anything anyone says in one turn;
+/// it is here so a microphone left open in front of a television cannot grow without bound.
+const MAX_AUDIO_MS: usize = 180_000;
+
 #[derive(Default)]
 pub struct Utterance {
     generation: Option<Generation>,
@@ -29,11 +35,25 @@ impl Utterance {
         self.generation
     }
 
+    /// Whether the endpoint has already closed this utterance.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    /// Whether this utterance has grown past what one turn may hold.
+    ///
+    /// Reopening a full utterance would only fail on the next piece, so a turn that reaches
+    /// this ends and is answered; the speaker's next words start a turn of their own.
+    pub fn is_full(&self) -> bool {
+        self.pieces.len() >= MAX_PIECES || self.audio_ms >= MAX_AUDIO_MS
+    }
+
     pub fn add(&mut self, sequence: u64, audio_ms: usize) -> Result<(), &'static str> {
         if self.generation.is_none() || self.closed {
             return Err("no open utterance");
         }
-        if self.pieces.len() >= 128 || self.audio_ms.saturating_add(audio_ms) > 180_000 {
+        if self.pieces.len() >= MAX_PIECES || self.audio_ms.saturating_add(audio_ms) > MAX_AUDIO_MS
+        {
             return Err("utterance exceeded the three-minute limit");
         }
         if self.pieces.contains_key(&sequence) {
@@ -145,6 +165,43 @@ mod tests {
             crate::reply::ChunkLimits::default(),
         )
         .generation()
+    }
+
+    #[test]
+    fn an_utterance_says_it_is_full_before_it_refuses_a_piece() {
+        // The host has to be able to ask. Finding out by way of a refused piece used to reach
+        // the speaker as invalid input, and took the whole turn - every word already recognised
+        // in it included - along with the message.
+        let mut utterance = Utterance::default();
+        utterance.begin(generation());
+        assert!(!utterance.is_full());
+        for sequence in 0..MAX_PIECES as u64 {
+            assert!(utterance.add(sequence, 100).is_ok(), "piece {sequence}");
+        }
+        assert!(utterance.is_full());
+        assert!(utterance.add(MAX_PIECES as u64, 100).is_err());
+    }
+
+    #[test]
+    fn a_closed_utterance_reopens_for_the_rest_of_the_same_question() {
+        // The speaker carried on while recognition of the first half was still running.
+        let mut utterance = Utterance::default();
+        utterance.begin(generation());
+        utterance.add(0, 1_000).unwrap();
+        utterance.close();
+        assert!(utterance.is_closed());
+        assert!(utterance.add(1, 1_000).is_err(), "closed means closed");
+
+        utterance.reopen();
+        assert!(!utterance.is_closed());
+        assert!(utterance.add(1, 1_000).is_ok());
+        assert_eq!(utterance.audio_ms(), 2_000, "both halves are one question");
+
+        utterance.complete(0, "first half".into());
+        utterance.complete(1, "second half".into());
+        utterance.close();
+        let (_, text) = utterance.take_ready().expect("both pieces are in");
+        assert_eq!(text, "first half second half");
     }
 
     #[test]
