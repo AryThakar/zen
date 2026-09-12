@@ -45,15 +45,18 @@ const VAD_STATE_LEN: usize = 128;
 // Silero VAD
 // ============================================================================================
 
-/// Silero v6, holding its own recurrent state.
+/// Silero VAD, holding its own recurrent state.
 ///
-/// The `h`/`c` state is per-conversation, not per-frame: carrying it across utterances is what
-/// lets the model use context, but stale state from a previous speaker causes false starts on the
-/// next one, so [`SileroVad::reset`] exists and the segmenter calls it at every segment boundary.
+/// The state is per-conversation, not per-frame: carrying it across utterances is what lets the
+/// model use context, but stale state from a previous speaker causes false starts on the next
+/// one, so [`SileroVad::reset`] exists and the segmenter calls it at every segment boundary.
+///
+/// Silero's published export carries both LSTM halves in one `2 x 1 x 128` tensor and returns
+/// the next one as `stateN`; older exports split it into separate `h` and `c` tensors. This
+/// drives the published one.
 pub struct SileroVad {
     session: Session,
-    hidden: Vec<f32>,
-    cell: Vec<f32>,
+    state: Vec<f32>,
 }
 
 impl SileroVad {
@@ -68,8 +71,7 @@ impl SileroVad {
             .map_err(|error| AudioError::Onnx(error.to_string()))?;
         Ok(Self {
             session,
-            hidden: vec![0.0; VAD_STATE_LEN],
-            cell: vec![0.0; VAD_STATE_LEN],
+            state: vec![0.0; 2 * VAD_STATE_LEN],
         })
     }
 
@@ -78,8 +80,7 @@ impl SileroVad {
     /// Without this between utterances the GRU carries dirty state forward and turn two starts
     /// with the model already half-convinced someone is speaking.
     pub fn reset(&mut self) {
-        self.hidden.fill(0.0);
-        self.cell.fill(0.0);
+        self.state.fill(0.0);
     }
 
     /// Speech probability for exactly one frame.
@@ -92,33 +93,28 @@ impl SileroVad {
         }
         let input = Value::from_array(([1usize, VAD_FRAME_SAMPLES], frame.to_vec()))
             .map_err(|error| AudioError::Onnx(error.to_string()))?;
-        let hidden = Value::from_array(([1usize, 1, VAD_STATE_LEN], self.hidden.clone()))
+        let state = Value::from_array(([2usize, 1, VAD_STATE_LEN], self.state.clone()))
             .map_err(|error| AudioError::Onnx(error.to_string()))?;
-        let cell = Value::from_array(([1usize, 1, VAD_STATE_LEN], self.cell.clone()))
+        // The graph switches its front end on this value; Zen only ever feeds 16 kHz.
+        let rate = Value::from_array(([1usize], vec![i64::from(SAMPLE_RATE)]))
             .map_err(|error| AudioError::Onnx(error.to_string()))?;
 
         let outputs = self
             .session
-            .run(ort::inputs! { "input" => input, "h" => hidden, "c" => cell })
+            .run(ort::inputs! { "input" => input, "state" => state, "sr" => rate })
             .map_err(|error| AudioError::Onnx(error.to_string()))?;
 
-        let probability = outputs["speech_probs"]
+        let probability = outputs["output"]
             .try_extract_tensor::<f32>()
             .map_err(|error| AudioError::Onnx(error.to_string()))?
             .1
             .first()
             .copied()
-            .ok_or_else(|| AudioError::Onnx("speech_probs was empty".into()))?;
+            .ok_or_else(|| AudioError::Onnx("output was empty".into()))?;
 
         // State must be copied out before the next call or the model runs open-loop.
-        self.hidden.copy_from_slice(
-            outputs["hn"]
-                .try_extract_tensor::<f32>()
-                .map_err(|error| AudioError::Onnx(error.to_string()))?
-                .1,
-        );
-        self.cell.copy_from_slice(
-            outputs["cn"]
+        self.state.copy_from_slice(
+            outputs["stateN"]
                 .try_extract_tensor::<f32>()
                 .map_err(|error| AudioError::Onnx(error.to_string()))?
                 .1,
@@ -1364,7 +1360,7 @@ mod tests {
     fn a_wrong_sized_frame_is_rejected_rather_than_reshaped() {
         // The exported Silero graph fixes the frame at 576; quietly padding or truncating would
         // produce a plausible-looking probability from the wrong audio.
-        let model = r"C:\zen-ai\model\VAD\silero_vad_v6.onnx";
+        let model = r"C:\zen-ai\model\VAD\silero_vad.onnx";
         if !Path::new(model).is_file() {
             return;
         }
@@ -1377,7 +1373,7 @@ mod tests {
     fn silero_separates_speech_from_silence() {
         // An end-to-end sanity check on the real model: digital silence must score low. Skipped
         // when the model is absent so the suite still runs on a machine without it.
-        let model = r"C:\zen-ai\model\VAD\silero_vad_v6.onnx";
+        let model = r"C:\zen-ai\model\VAD\silero_vad.onnx";
         if !Path::new(model).is_file() {
             return;
         }

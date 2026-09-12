@@ -158,7 +158,7 @@ them in an **installation root**:
     ├── E2B\                 Gemma 4 E2B GGUF and MTP drafter
     ├── Qwen ASR\            Qwen3-ASR GGUF, crispasr.dll and CPU ggml DLLs
     ├── Qwen TTS\            Qwen3-TTS talker and tokenizer GGUFs, your voice reference
-    └── VAD\                 silero_vad_v6.onnx
+    └── VAD\                 silero_vad.onnx
 ```
 
 [docs/SETUP.md](docs/SETUP.md) lists every file, where to get it, and the checksums of the

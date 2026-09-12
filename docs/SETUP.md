@@ -46,7 +46,7 @@ This is the exact set of files Zen loads, as tested:
     │   ├── user_ref_voice.wav
     │   └── user_ref_text.txt
     └── VAD\
-        └── silero_vad_v6.onnx
+        └── silero_vad.onnx
 ```
 
 Together these take about 5.8 GB.
@@ -60,7 +60,7 @@ Together these take about 5.8 GB.
 | `model\Qwen ASR\qwen3-asr-1.7b-q4_k.gguf` | 1.49 GB | [cstr/qwen3-asr-1.7b-GGUF](https://huggingface.co/cstr/qwen3-asr-1.7b-GGUF) |
 | `model\Qwen TTS\qwen-talker-0.6b-base-Q4_K_M.gguf` | 629 MB | [CC-TM/Qwen3-TTS-GGUF](https://huggingface.co/CC-TM/Qwen3-TTS-GGUF) |
 | `model\Qwen TTS\qwen-tokenizer-12hz-Q4_K_M.gguf` | 255 MB | same repository |
-| `model\VAD\silero_vad_v6.onnx` | 1.2 MB | a [Silero VAD](https://github.com/snakers4/silero-vad) ONNX export saved under this name. Zen needs a graph whose input frame is 576 samples at 16 kHz; `src/silero_vad/data/silero_vad_16k_op15.onnx` is the current file of that shape. The copy Zen was tested with (checksum below) matches no file published in that repository today, so check a fresh download against the frame-size test in `src/audio.rs` before relying on it. |
+| `model\VAD\silero_vad.onnx` | 2.3 MB | [Silero VAD](https://github.com/snakers4/silero-vad), `src/silero_vad/data/silero_vad.onnx` at tag `v6.2.1` |
 
 The SHA-256 checksums of the files Zen was tested with are below. For the five GGUF files these
 match the checksums published on Hugging Face at the time of writing.
@@ -71,7 +71,7 @@ e531007218dfab990486a5de7676a6932d6ea8dea233d1f698d7c21cf8a16889  gemma-4-E2B-it
 ec197cef7ccc589fdcae1becc3f4a3de119d0a41e790b898b519b1a048dad8d4  qwen3-asr-1.7b-q4_k.gguf
 4b468ec7b1f62b90ef4ca316c0aa57deadfd54b2cf9651703ea753cedaf04226  qwen-talker-0.6b-base-Q4_K_M.gguf
 cf3788b4d50aaa665fb6e57c170396aae03a3555fea52d2b5d0cda902d658039  qwen-tokenizer-12hz-Q4_K_M.gguf
-4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2  silero_vad_v6.onnx
+1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3  silero_vad.onnx
 ```
 
 Check a download in PowerShell with `Get-FileHash <file> -Algorithm SHA256`.

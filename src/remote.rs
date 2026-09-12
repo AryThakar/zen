@@ -101,7 +101,7 @@ async fn run_owned(
         // Chrome supplies AEC/NS/AGC and the capture graph filters the speech band, so this
         // side only decides when someone is speaking.
         let capture = CapturePipeline::new(
-            root.join("model/VAD/silero_vad_v6.onnx"),
+            root.join("model/VAD/silero_vad.onnx"),
             SegmenterConfig {
                 endpoint,
                 ..SegmenterConfig::default()
