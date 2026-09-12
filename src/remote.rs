@@ -62,6 +62,31 @@ pub(crate) fn filter_budget(raw: &str) -> usize {
     (raw.chars().count() + 64).clamp(128, 512)
 }
 
+/// The opening line, chosen from the clock on this machine.
+///
+/// A session that begins in silence gives no sign that anything is listening. This is said
+/// through the same phrase path a reply takes, so it is interruptible and answers to the same
+/// generation fence: speak over it and it stops like anything else. It is deliberately not
+/// recorded in the conversation - nothing was asked, and the model did not say it.
+#[cfg(windows)]
+fn greeting_line() -> String {
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+    // The hour is the user's, not UTC: a greeting that calls midnight morning is worse than none.
+    let hour = unsafe { GetLocalTime() }.wHour;
+    match hour {
+        5..=11 => "Good morning. What's on your mind?",
+        12..=16 => "Good afternoon. What's on your mind?",
+        17..=21 => "Good evening. What's on your mind?",
+        _ => "Hello. What's on your mind?",
+    }
+    .to_string()
+}
+
+#[cfg(not(windows))]
+fn greeting_line() -> String {
+    "Hello. What's on your mind?".to_string()
+}
+
 pub(crate) async fn run(
     options: &EngineOptions,
     prompt: &str,
@@ -151,6 +176,12 @@ async fn run_owned(
     };
     let mut connection = transport.status();
     transport.send(json!({"type":"ready"}));
+    // Open with a voice rather than silence.
+    let opening = Task::Speak {
+        generation: runner.session.generation(),
+        text: greeting_line(),
+    };
+    runner.dispatch(vec![opening]);
     let mut timer = tokio::time::interval(Duration::from_millis(10));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let result = loop {

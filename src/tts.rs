@@ -255,6 +255,24 @@ impl Synthesizer for TtsEngine {
 
 unsafe impl Sync for TtsEngine {}
 
+/// The talker weights to load, best first.
+///
+/// Q8 sounds better and costs about 320 MB more graphics memory than Q4, which is most of
+/// what is spare on a 4 GB card. Whichever is installed wins, Q8 first, so trying the larger
+/// one is a matter of putting the file in place - and backing it out is deleting it again.
+/// The Q4 name is the fallback so a missing-file error names the file people actually have.
+fn talker_file(model_dir: &Path) -> PathBuf {
+    const BY_QUALITY: [&str; 2] = [
+        "qwen-talker-0.6b-base-Q8_0.gguf",
+        "qwen-talker-0.6b-base-Q4_K_M.gguf",
+    ];
+    BY_QUALITY
+        .into_iter()
+        .map(|name| model_dir.join(name))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| model_dir.join(BY_QUALITY[1]))
+}
+
 impl TtsEngine {
     /// Loads the engine from a directory holding `qwen.dll`'s models and the reference voice.
     ///
@@ -262,7 +280,7 @@ impl TtsEngine {
     pub fn load(library: impl AsRef<Path>, model_dir: impl AsRef<Path>) -> Result<Self, TtsError> {
         let library_path = library.as_ref().to_path_buf();
         let model_dir = model_dir.as_ref();
-        let talker_path = model_dir.join("qwen-talker-0.6b-base-Q4_K_M.gguf");
+        let talker_path = talker_file(model_dir);
         let codec_path = model_dir.join("qwen-tokenizer-12hz-Q4_K_M.gguf");
         let reference_wav = model_dir.join("user_ref_voice.wav");
         let reference_txt = model_dir.join("user_ref_text.txt");
@@ -668,6 +686,21 @@ mod tests {
     fn a_missing_model_directory_is_reported() {
         let outcome = TtsEngine::load(r"C:\zen-ai\lib\qwen.dll", r"C:\zen-ai\model\nope");
         assert!(matches!(outcome, Err(TtsError::Missing(_))));
+    }
+
+    #[test]
+    fn the_better_talker_wins_when_both_are_installed() {
+        let dir = std::env::temp_dir().join(format!("zen-talker-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let q4 = dir.join("qwen-talker-0.6b-base-Q4_K_M.gguf");
+        let q8 = dir.join("qwen-talker-0.6b-base-Q8_0.gguf");
+        // Neither installed: the error should name the file most people have.
+        assert_eq!(talker_file(&dir), q4);
+        std::fs::write(&q4, b"gguf").unwrap();
+        assert_eq!(talker_file(&dir), q4);
+        std::fs::write(&q8, b"gguf").unwrap();
+        assert_eq!(talker_file(&dir), q8, "Q8 must win when it is installed");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
