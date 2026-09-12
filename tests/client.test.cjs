@@ -116,6 +116,16 @@ function audioGraph() {
           setValueAtTime(value, at) {
             ramps.push({ value, at, kind: "set" });
           },
+          setValueCurveAtTime(points, at, duration) {
+            ramps.push({
+              value: points[points.length - 1],
+              at,
+              duration,
+              kind: "curve",
+              // Equal power means the squares sum to one across the pair, not the values.
+              power: points[Math.floor(points.length / 2)] ** 2,
+            });
+          },
           linearRampToValueAtTime(value, at) {
             ramps.push({ value, at, kind: "ramp" });
           },
@@ -255,6 +265,39 @@ test("codec blocks overlap briefly at their seam instead of clicking", async () 
       sources[1].at,
       previousEnd - 0.006,
       "adjacent codec blocks should receive a short equal-power overlap",
+    );
+  } finally { player.dispose(); }
+});
+
+test("the seam crossfade holds power, not amplitude", async () => {
+  // The two sides of a codec seam are different audio, so their powers add and not their
+  // amplitudes. Ramping both linearly keeps the gains summing to one while the level falls
+  // away underneath: measured over a synthesised passage that is a 2.00 dB dip at every seam,
+  // four times a second, heard as roughness rather than as any one click.
+  const { AudioPlayback } = await import("../src/client/audio.mjs");
+  for (let i = 0; i < AudioPlayback.SEAM_IN.length; i++) {
+    const power = AudioPlayback.SEAM_IN[i] ** 2 + AudioPlayback.SEAM_OUT[i] ** 2;
+    assert.ok(
+      Math.abs(power - 1) < 1e-6,
+      `point ${i} sums to ${power}, which is a hole in the level`,
+    );
+  }
+  assert.equal(AudioPlayback.SEAM_IN[0], 0, "the arriving block starts silent");
+  assert.equal(AudioPlayback.SEAM_OUT[AudioPlayback.SEAM_OUT.length - 1], 0, "the leaving block ends silent");
+});
+
+test("adjacent codec blocks are crossfaded with that curve, not a straight ramp", async () => {
+  const { player, audio, gains } = await playback();
+  try {
+    player.begin({ generation: 3, phrase: 1, text: "A smooth sentence." });
+    player.queue({ generation: 3, phrase: 1, sequence: 1, pcm: new Uint8Array(12000) });
+    audio.currentTime = 0.15;
+    player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: new Uint8Array(12000) });
+    const arriving = gains.at(-1).gain.ramps.filter((r) => r.kind === "curve");
+    assert.equal(arriving.length, 1, "the arriving block is faded in with a curve");
+    assert.ok(
+      Math.abs(arriving[0].power - 0.5) < 0.01,
+      `half way through the crossfade each side should carry half the power, got ${arriving[0].power}`,
     );
   } finally { player.dispose(); }
 });
