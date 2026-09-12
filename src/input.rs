@@ -97,6 +97,15 @@ impl Utterance {
             .collect::<Vec<_>>()
             .join(" ")
     }
+    /// Accept more audio into the utterance the endpoint just closed.
+    ///
+    /// The speaker carried on while recognition was still running. Everything already
+    /// submitted stays pending, and the new audio joins the same question rather than
+    /// starting one of its own.
+    pub fn reopen(&mut self) {
+        self.closed = false;
+    }
+
     pub fn close(&mut self) {
         self.closed = true;
     }

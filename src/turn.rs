@@ -49,11 +49,12 @@ impl Phase {
     }
 
     /// Whether a reply in this phase can be cut short by the user.
+    /// Whether speech arriving now interrupts work that has already produced something.
+    ///
+    /// Transcribing is deliberately absent: nothing has been said back yet, so speech there
+    /// continues the question rather than cutting anything off.
     pub const fn interruptible(self) -> bool {
-        matches!(
-            self,
-            Phase::Transcribing | Phase::Thinking | Phase::Preparing | Phase::Speaking
-        )
+        matches!(self, Phase::Thinking | Phase::Preparing | Phase::Speaking)
     }
 }
 
@@ -181,13 +182,20 @@ impl TurnMachine {
 
             // The user talking over a reply is the whole point of barge-in. Stop everything
             // immediately - playback first, because that is what they can hear.
-            (
-                Phase::Speaking | Phase::Preparing | Phase::Thinking | Phase::Transcribing,
-                Event::SpeechStarted,
-            ) => {
+            (Phase::Speaking | Phase::Preparing | Phase::Thinking, Event::SpeechStarted) => {
                 self.interruptions += 1;
                 self.enter(Phase::Listening, now_ms);
                 vec![Action::CancelSpeaking, Action::CancelThinking]
+            }
+
+            // Nothing has been said back yet - recognition of what was just heard is still
+            // running - so more speech is the rest of the same question, not an interruption.
+            // Starting over here discards every word already recognised, and on a long question
+            // that is the whole question: recognising thirty seconds of speech takes longer
+            // than the pause a speaker leaves before adding to it.
+            (Phase::Transcribing, Event::SpeechStarted) => {
+                self.enter(Phase::Listening, now_ms);
+                Vec::new()
             }
 
             // Busy. Input is captured but must not steer the turn.
@@ -334,18 +342,6 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_speech_while_transcribing_starts_a_fresh_utterance() {
-        let mut machine = machine();
-        machine.handle(Event::SpeechStarted, 0);
-        machine.handle(Event::SegmentReady, 500);
-        assert_eq!(machine.phase(), Phase::Transcribing);
-        assert!(machine
-            .handle(Event::SpeechStarted, 600)
-            .contains(&Action::CancelThinking));
-        assert_eq!(machine.phase(), Phase::Listening);
-    }
-
-    #[test]
     fn speech_while_speaking_interrupts_immediately() {
         // Playback is cancelled before anything else, because it is what the user can hear.
         let mut machine = machine();
@@ -358,17 +354,39 @@ mod tests {
     }
 
     #[test]
-    fn all_active_work_is_interruptible() {
+    fn work_that_has_produced_something_is_interruptible() {
         assert!(Phase::Speaking.interruptible());
-        for phase in [Phase::Idle, Phase::Listening] {
+        // Transcribing is not interrupted by speech: it has produced nothing to cut off, and
+        // the words it has recognised so far belong to the same question.
+        for phase in [Phase::Idle, Phase::Listening, Phase::Transcribing] {
             assert!(
                 !phase.interruptible(),
                 "{phase:?} must not be interruptible"
             );
         }
-        for phase in [Phase::Transcribing, Phase::Thinking, Phase::Preparing] {
+        for phase in [Phase::Thinking, Phase::Preparing] {
             assert!(phase.interruptible());
         }
+    }
+
+    #[test]
+    fn speech_during_recognition_continues_the_turn_instead_of_restarting_it() {
+        let mut machine = machine();
+        machine.handle(Event::SpeechStarted, 0);
+        machine.handle(Event::SegmentReady, 1_000);
+        assert_eq!(machine.phase(), Phase::Transcribing);
+        // The speaker adds to the question while it is still being recognised.
+        let actions = machine.handle(Event::SpeechStarted, 1_200);
+        assert_eq!(machine.phase(), Phase::Listening);
+        assert!(
+            actions.is_empty(),
+            "nothing is playing or composing, so there is nothing to cancel: {actions:?}"
+        );
+        assert_eq!(
+            machine.interruptions(),
+            0,
+            "continuing a question is not an interruption"
+        );
     }
 
     #[test]

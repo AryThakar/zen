@@ -13,7 +13,7 @@ use crate::{
     reply::{pause_after_ms, ChunkLimits},
     session::{Generation, Session, Task},
     tts::{Synthesizer, TTS_SAMPLE_RATE},
-    turn::TurnTimeouts,
+    turn::{Phase, TurnTimeouts},
     voice::{VoiceEvent, VoiceWorker},
 };
 use futures_util::FutureExt;
@@ -490,9 +490,20 @@ impl RemoteRunner {
     fn capture_event(&mut self, event: CaptureEvent) -> Result<(), Error> {
         match event {
             CaptureEvent::Started => {
+                // If recognition of the previous utterance is still outstanding, the session
+                // keeps the same turn, so the jobs already in flight have to be kept with it.
+                let continuing = self.session.phase() == Phase::Transcribing
+                    && self.input.generation() == Some(self.session.generation());
                 let tasks = self.session.on_speech(self.now());
                 self.dispatch(tasks);
-                self.input.begin(self.session.generation());
+                if continuing {
+                    // The deadline was set for the utterance as it stood at the endpoint that
+                    // has just been undone; a new one is set when this one ends.
+                    self.transcribe_deadline = None;
+                    self.input.reopen();
+                } else {
+                    self.input.begin(self.session.generation());
+                }
             }
             CaptureEvent::Segment(segment) => {
                 let ms = segment.duration_ms();

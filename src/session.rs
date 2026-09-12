@@ -121,14 +121,18 @@ impl Session {
         if self.input_open {
             return Vec::new();
         }
-        let interrupted = self.turn.phase().interruptible();
-        if interrupted {
-            self.commit_reply(true);
+        // Recognition of what was just said is still running, so this is one question
+        // continuing. The generation has to stay: advancing it cancels the recognition jobs
+        // still in flight and throws away every word they had already produced.
+        let mut tasks = Vec::new();
+        if self.turn.phase() != Phase::Transcribing {
+            if self.turn.phase().interruptible() {
+                self.commit_reply(true);
+            }
+            tasks.push(self.advance());
         }
-        let cancel = self.advance();
         self.input_open = true;
         let actions = self.turn.handle(Event::SpeechStarted, now_ms);
-        let mut tasks = vec![cancel];
         tasks.extend(self.translate(actions));
         tasks
     }
@@ -416,6 +420,37 @@ mod tests {
         assert_eq!(session.phase(), Phase::Transcribing);
         assert!(session.on_reply_complete(old, 1000).is_empty());
     }
+    #[test]
+    fn speech_while_recognition_is_running_keeps_the_same_turn() {
+        // The generation is what the recognition jobs are filed under. Advancing it here would
+        // cancel the jobs still running on the first half of a long question and discard every
+        // word they had already produced, so the speaker adding to their own question must not
+        // start a new turn.
+        let mut session = session();
+        session.on_speech(0);
+        session.on_turn_ended(1_000);
+        assert_eq!(session.phase(), Phase::Transcribing);
+        let during = session.generation();
+
+        let tasks = session.on_speech(1_200);
+
+        assert_eq!(session.phase(), Phase::Listening);
+        assert_eq!(
+            session.generation(),
+            during,
+            "the turn continues, so the jobs in flight stay addressed to it"
+        );
+        assert!(
+            !tasks.iter().any(|task| matches!(task, Task::Cancel { .. })),
+            "cancelling would discard the recognition already done: {tasks:?}"
+        );
+        // And it still finishes as one question.
+        session.on_turn_ended(2_000);
+        assert_eq!(session.phase(), Phase::Transcribing);
+        let tasks = session.on_transcript(session.generation(), "both halves".into(), 2_100);
+        assert!(tasks.iter().any(|task| matches!(task, Task::Filter { .. })));
+    }
+
     #[test]
     fn a_filter_line_cut_off_by_its_budget_falls_back_to_the_whole_transcript() {
         // The filter has to write the transcript back out, so running out of tokens leaves a
