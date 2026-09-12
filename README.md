@@ -135,20 +135,31 @@ acknowledgements drive backpressure and decide what enters the conversation hist
 ## Requirements
 
 - **Windows 11** (WebView2 is part of the OS). Windows is the only supported platform today.
-- **NVIDIA GPU with 4 GB of VRAM** and a driver that supports CUDA 13, the version of the
-  bundled CUDA runtime DLLs
+- **NVIDIA GPU with 4 GB of VRAM** and a driver new enough for CUDA 13, which is the version
+  of the CUDA runtime DLLs you download alongside llama.cpp
 - **16 GB RAM** and about **5.9 GB of disk** for the models and native libraries
 - To build: **Rust 1.91+** (MSVC toolchain). **Node.js 22+** only for the interface tests.
 
 ## Getting started
 
-### 1. Build
+### 1. Get Zen
+
+Download `Zen.exe` from the [latest release](https://github.com/AryThakar/zen/releases/latest)
+and check it against the `SHA256SUMS.txt` published beside it:
+
+```powershell
+Get-FileHash .\Zen.exe -Algorithm SHA256
+```
+
+Or build it yourself, which needs the Rust toolchain from Requirements above:
 
 ```powershell
 git clone https://github.com/AryThakar/zen.git
 cd zen
 cargo build --release --locked
 ```
+
+Either way you end up with one executable. `Zen.exe --version` says which one you have.
 
 ### 2. Install the models and native libraries
 
@@ -174,8 +185,8 @@ than Windows — see [docs/BUILDING_NATIVE.md](docs/BUILDING_NATIVE.md).
 
 ### 3. Run
 
-Copy `target\release\zen.exe` into the root as `Zen.exe` and double-click it. There is no
-installer, service or first-run setup. Zen finds the root beside the executable or in any
+Put `Zen.exe` in the root and double-click it — the downloaded one, or `target\release\zen.exe`
+renamed if you built it. There is no installer, service or first-run setup. Zen finds the root beside the executable or in any
 parent directory, so a clone inside the root also runs in place. Otherwise pass `--root PATH`
 or set `ZEN_ROOT`.
 

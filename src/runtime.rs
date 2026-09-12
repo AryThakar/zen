@@ -108,15 +108,19 @@ impl From<Options> for EngineOptions {
     }
 }
 
+/// Printed by `--version`, so a downloaded binary can say which one it is.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 const USAGE: &str = r"Zen local voice assistant
 
   zen [OPTIONS]                  Open the Zen window
   zen --self-test                Exercise native ASR, LLM, TTS and cancellation
+  zen --version                  Show the version
   zen --help                     Show this message
 
   --root PATH                    Installation root holding bin, lib and model
                                  (found next to the executable by default)
-  --system-prompt TEXT           Override the default talker instructions
+  --system-prompt TEXT           Replace the persona. The voice rules are kept
   --system-prompt-file PATH      Read instructions from a UTF-8 file
   --endpoint-ms N                Fix the end-of-utterance pause, 450..2000 ms.
                                  Omitted, Zen learns it from how you pause
@@ -264,6 +268,13 @@ pub fn main_entry() -> ExitCode {
                 ExitCode::FAILURE
             }
         };
+    }
+    if std::env::args()
+        .skip(1)
+        .any(|a| a == "--version" || a == "-V")
+    {
+        println!("zen {VERSION}");
+        return ExitCode::SUCCESS;
     }
     let options = match parse(std::env::args().skip(1)) {
         Ok(Some(o)) => o,
