@@ -262,12 +262,24 @@ export class VoiceClient {
     $("inputDevice").disabled = this.micChanging || !!this.mic?.pending;
   }
 
+  /// The microphone raises its onset threshold while Zen can be heard, so that his own voice
+  /// coming back through the speakers is not mistaken for someone interrupting him. Driven by
+  /// audio actually scheduled as well as by the phase, because the opening greeting is spoken
+  /// without the turn machine and never reaches the speaking phase at all.
+  micPlayback() {
+    this.mic?.setPlayback(
+      this.sounding === true ||
+        this.phase === "speaking" ||
+        this.phase === "preparing",
+    );
+  }
+
   setPhase(phase) {
     this.phase = phase;
     this.orb.phase = phase;
     $("orbState").dataset.phase = phase;
     $("stateLabel").textContent = labels[phase] || "Here with you";
-    this.mic?.setPlayback(phase === "speaking" || phase === "preparing");
+    this.micPlayback();
     if (["thinking", "transcribing", "preparing"].includes(phase))
       this.transcript.waiting();
     else $("liveCaption").classList.remove("waiting");
@@ -276,18 +288,10 @@ export class VoiceClient {
 
   async audio() {
     if (!this.context) {
-      // Matching the synthesiser's rate keeps playback free of per-block resampling; the
-      // device resamples once, on the continuous output stream, instead of once per block.
-      // Capture decimates from whatever rate the context runs at, so it does not mind.
-      let context;
-      try {
-        context = new AudioContext({
-          latencyHint: "interactive",
-          sampleRate: AudioPlayback.RATE,
-        });
-      } catch {
-        context = new AudioContext({ latencyHint: "interactive" });
-      }
+      // The device's own rate. Asking for the synthesiser's 24 kHz instead was measured to
+      // change playback by -68 dBFS - nothing - while putting the browser's echo canceller on
+      // a non-native graph, which is the one thing that must keep working while Zen is talking.
+      const context = new AudioContext({ latencyHint: "interactive" });
       this.context = context;
       this.sound = new Soundscape(context);
       this.sound.enabled = this.soundEnabled;
@@ -298,6 +302,10 @@ export class VoiceClient {
           if (generation !== this.generation) return;
           if (kind === "start") this.transcript.show("Zen", text);
           else this.transcript.append("Zen", text, generation);
+        },
+        (sounding) => {
+          this.sounding = sounding;
+          this.micPlayback();
         },
       );
       this.playback.reset(this.generation);

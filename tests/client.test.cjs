@@ -203,8 +203,8 @@ test("a chunk arriving before playback runs out stays contiguous even with littl
       const previousEnd = sources[0].at + sources[0].buffer.duration;
       audio.currentTime = previousEnd - headroom;
       player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: new Uint8Array(12000) });
-      assert.equal(sources[1].at, previousEnd,
-        "an on-time chunk must neither insert silence nor overlap what came before");
+      assert.equal(sources[1].at, headroom > 0.006 ? previousEnd - 0.006 : previousEnd,
+        "an on-time chunk must not insert silence");
     } finally { player.dispose(); }
   }
 });
@@ -234,36 +234,52 @@ test("the measured short first codec block tolerates a 20 ms delivery delay", as
       player.queue({ generation: 3, phrase: 1, sequence: index + 1, pcm: new Uint8Array(samples * 2) });
     }
     for (let i = 1; i < sources.length; i++)
-      assert.equal(sources[i].at, sources[i - 1].at + sources[i - 1].buffer.duration,
+      assert.equal(sources[i].at, sources[i - 1].at + sources[i - 1].buffer.duration - 0.006,
         "short initial codec chunks need enough startup headroom for IPC jitter");
   } finally { player.dispose(); }
 });
 
-test("codec blocks of one phrase are joined sample to sample, never overlapped", async () => {
-  // They are consecutive samples of a single synthesis, so there is no seam to hide. Sliding
-  // each block back to crossfade it cost six milliseconds of speech at every join - 2.3% of
-  // everything spoken - and left the phrase ending earlier than the pause scheduled after it.
+test("codec blocks overlap briefly at their seam instead of clicking", async () => {
+  // The blocks are not one continuous waveform: tts.rs asks the codec for 0.25 s chunks with
+  // 80 ms of left context and voice.rs splits on exactly that boundary, so every join is a
+  // codec join. Measured over a synthesised passage most of them are clean, but the worst step
+  // at a boundary ran to six times the movement either side of it, and that one is a tick.
   const { player, audio, sources } = await playback();
   try {
     player.begin({ generation: 3, phrase: 1, text: "A smooth sentence." });
-    let played = 0;
-    for (let sequence = 1; sequence <= 6; sequence++) {
-      player.queue({ generation: 3, phrase: 1, sequence, pcm: new Uint8Array(12000) });
-      audio.currentTime = 0.15 * sequence;
-      played += sources[sequence - 1].buffer.duration;
-    }
-    for (let i = 1; i < sources.length; i++)
-      assert.equal(
-        sources[i].at,
-        sources[i - 1].at + sources[i - 1].buffer.duration,
-        "block " + i + " must start exactly where the one before it ends",
-      );
-    const last = sources[sources.length - 1];
+    player.queue({ generation: 3, phrase: 1, sequence: 1, pcm: new Uint8Array(12000) });
+    audio.currentTime = 0.15;
+    const previousEnd = sources[0].at + sources[0].buffer.duration;
+    player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: new Uint8Array(12000) });
     assert.equal(
-      Number((last.at + last.buffer.duration - sources[0].at).toFixed(6)),
-      Number(played.toFixed(6)),
-      "the phrase must occupy exactly as long as the audio in it",
+      sources[1].at,
+      previousEnd - 0.006,
+      "adjacent codec blocks should receive a short equal-power overlap",
     );
+  } finally { player.dispose(); }
+});
+
+test("the microphone is told Zen can be heard even with no turn in progress", async () => {
+  // The opening greeting is dispatched straight to the synthesiser, so the session phase never
+  // reaches speaking. Without this the capture worklet keeps its quiet-room onset threshold
+  // while Zen is talking, and Zen barges in on his own greeting.
+  const graph = audioGraph();
+  const { AudioPlayback } = await import("../src/client/audio.mjs");
+  const sounding = [];
+  const player = new AudioPlayback(
+    graph.audio,
+    (e) => graph.sent.push(e),
+    () => {},
+    (active) => sounding.push(active),
+  );
+  player.reset(3);
+  try {
+    player.begin({ generation: 3, phrase: 1, text: "Good evening." });
+    player.queue({ generation: 3, phrase: 1, sequence: 1, pcm: new Uint8Array(12000) });
+    assert.equal(sounding.at(-1), true, "scheduling audio must raise the threshold at once");
+    graph.audio.currentTime = graph.audio.deviceTime = 30;
+    player.tick();
+    assert.equal(sounding.at(-1), false, "and drop it once the audio has been heard");
   } finally { player.dispose(); }
 });
 

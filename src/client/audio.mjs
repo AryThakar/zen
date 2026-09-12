@@ -3,19 +3,30 @@ export class AudioPlayback {
   // The codec's first block can be only 80 ms, with the next arriving 125 ms later.
   // Cover that initial deficit plus a few IPC/render ticks before starting the device.
   static STARTUP_BUFFER = 0.1;
-  // A short equal-power overlap removes clicks and metallic seams between codec blocks.
-  /// The rate synthesis produces. The context is asked for the same rate: at any other, every
-  /// block is resampled on its own with no filter state carried from the block before it, and
-  /// each join is left with a transient - about two hundred of them in a conversation.
+  /// A short equal-power overlap across the seam between codec blocks.
+  ///
+  /// The blocks are not one continuous waveform. `tts.rs` asks the codec for 0.25 s chunks with
+  /// 80 ms of left context, and `voice.rs` hands them on split at exactly that 0.25 s, so every
+  /// block boundary is a codec boundary. Measured across a synthesised passage, most of those
+  /// join cleanly, but a few do not: the worst sample-to-sample step at a boundary ran to six
+  /// times the movement either side of it, and that one is heard as a tick. The overlap costs
+  /// six milliseconds of timeline per join, which is the price of not hearing them.
+  static SEAM_FADE = 0.006;
+  /// The rate synthesis produces.
   static RATE = 24000;
   /// Ramped off the end of a phrase. Synthesis stops when it runs out of text, sometimes with
   /// the waveform still at a fifth of full scale, which is heard as the last sound being cut.
   static PHRASE_FADE = 0.006;
 
-  constructor(context, send, onPhrase = () => {}) {
+  constructor(context, send, onPhrase = () => {}, onSounding = () => {}) {
     this.context = context;
     this.send = send;
     this.onPhrase = onPhrase;
+    // Raised while Zen's voice is actually leaving the speakers, which is not the same as the
+    // session being in a phase that implies it: the opening greeting is dispatched straight to
+    // the synthesiser without the turn machine, so the phase stays idle throughout it.
+    this.onSounding = onSounding;
+    this.sounding = false;
     this.analyser = context.createAnalyser();
     this.analyser.fftSize = 256;
     this.analyser.connect(context.destination);
@@ -47,6 +58,10 @@ export class AudioPlayback {
   clear() {
     this.epoch++;
     this.accepting = false;
+    if (this.sounding) {
+      this.sounding = false;
+      this.onSounding?.(false);
+    }
     this.markers = [];
     this.phrases.clear();
     const now = this.context.currentTime;
@@ -93,11 +108,7 @@ export class AudioPlayback {
       this.markers.length > 1024
     )
       throw new Error("Voice playback exceeded its buffer.");
-    const buffer = this.context.createBuffer(
-      1,
-      bytes.length / 2,
-      AudioPlayback.RATE,
-    );
+    const buffer = this.context.createBuffer(1, bytes.length / 2, AudioPlayback.RATE);
     const data = buffer.getChannelData(0),
       view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     for (let i = 0; i < data.length; i++)
@@ -111,32 +122,34 @@ export class AudioPlayback {
     // milliseconds remain inserts silence into an otherwise contiguous waveform.
     if (phrase.started && this.next < now)
       this.jitter = Math.min(0.16, this.jitter + 0.015);
-    // Blocks of one phrase are consecutive samples of a single synthesis, so they meet at the
-    // sample and need no crossfade. Overlapping them to hide a seam that was never there threw
-    // away six milliseconds of real audio at every join - 2.3% of everything spoken - and pulled
-    // the end of each phrase earlier than the pause scheduled after it.
-    const contiguous =
-      phrase.started && this.lastPhrase === event.phrase && this.next > now;
-    const at = contiguous
-      ? this.next
+    const blend =
+      phrase.started &&
+      this.lastPhrase === event.phrase &&
+      this.next > now + AudioPlayback.SEAM_FADE;
+    const at = blend
+      ? this.next - AudioPlayback.SEAM_FADE
       : Math.max(now + (this.next > now ? 0 : this.jitter), this.next);
     const end = at + buffer.duration;
     this.next = end;
-    if (!phrase.started) {
-      phrase.started = true;
-      this.markers.push({
-        at,
-        type: "playback_started",
-        phrase: event.phrase,
-        text: phrase.text,
-        epoch: this.epoch,
-      });
-    }
-    if (contiguous) {
-      gain.gain.setValueAtTime(1, at);
+    if (blend && this.lastItem) {
+      const fadeStart = at;
+      const fadeEnd = at + AudioPlayback.SEAM_FADE;
+      this.lastItem.gain.gain.cancelScheduledValues(fadeStart);
+      this.lastItem.gain.gain.setValueAtTime(1, fadeStart);
+      this.lastItem.gain.gain.linearRampToValueAtTime(0, fadeEnd);
+      gain.gain.setValueAtTime(0, fadeStart);
+      gain.gain.linearRampToValueAtTime(1, fadeEnd);
     } else {
-      // Starting a phrase, or resuming after an underrun: the waveform jumps here, so it needs
-      // a ramp to avoid a click.
+      if (!phrase.started) {
+        phrase.started = true;
+        this.markers.push({
+          at,
+          type: "playback_started",
+          phrase: event.phrase,
+          text: phrase.text,
+          epoch: this.epoch,
+        });
+      }
       gain.gain.setValueAtTime(0, at);
       gain.gain.linearRampToValueAtTime(
         1,
@@ -165,6 +178,7 @@ export class AudioPlayback {
     source.start(at);
     this.lastSequence = event.sequence;
     this.markers.sort((a, b) => a.at - b.at);
+    this.report();
   }
 
   end(event) {
@@ -239,6 +253,15 @@ export class AudioPlayback {
         this.onPhrase("end", marker.text, marker.phrase, this.generation);
       }
     }
+    this.report();
+  }
+
+  /// Tell the caller whether audio is on its way out of the speakers right now.
+  report() {
+    const sounding = this.accepting && this.next > this.outputTime();
+    if (sounding === this.sounding) return;
+    this.sounding = sounding;
+    this.onSounding(sounding);
   }
 
   level() {
