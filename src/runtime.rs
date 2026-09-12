@@ -28,7 +28,7 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 /// The talker prompt is embedded so a stock install has a voice without carrying a file
 /// beside the binary, and so the string is byte-identical every run, which is what lets
 /// llama-server reuse its cached prompt instead of reprocessing it.
-const TALKER: &str = include_str!("prompts/talker.txt");
+const PERSONA: &str = crate::bridge::DEFAULT_PERSONA;
 /// The same instruction the running engine gives the filter slot, so the self-test measures
 /// the shipped prompt rather than a copy of it that drifted.
 const FILTER: &str = include_str!("prompts/filter.txt");
@@ -84,7 +84,7 @@ impl Default for Options {
             run_for: None,
             gain: Loudness::DEFAULT_GAIN,
             reply_tokens: 512,
-            system_prompt: TALKER.to_string(),
+            system_prompt: PERSONA.to_string(),
         }
     }
 }
@@ -93,7 +93,7 @@ impl From<Options> for EngineOptions {
     fn from(o: Options) -> Self {
         Self {
             root: o.root,
-            system_prompt: o.system_prompt,
+            system_prompt: crate::bridge::compose_prompt(&o.system_prompt),
             endpoint: match o.endpoint_ms {
                 Some(ms) => crate::audio::EndpointPolicy::Fixed(
                     crate::audio::SegmenterConfig::frames_for_ms(ms),
@@ -390,7 +390,7 @@ async fn self_test(
     // model answers from the system prompt and the test reads a correct reply as a broken
     // engine. Anything the prompt is silent about proves the earlier turns actually arrived.
     let messages = vec![
-        ("system", TALKER.into()),
+        ("system", crate::bridge::compose_prompt(PERSONA)),
         ("user", "I left my keys in the blue drawer.".into()),
         ("assistant", "The blue drawer. Noted.".into()),
         ("user", "Which drawer did I say? Answer briefly.".into()),
@@ -420,7 +420,12 @@ async fn self_test(
     // something it cannot do. Whether a reply is *warm* is not testable and is not tested;
     // what is testable is that the instruction reached the model at all, which is the thing
     // that silently stops being true when the prompt is edited.
-    let spoken = talker_reply(llama, "How many days does February have in a leap year?").await?;
+    let spoken = talker_reply(
+        llama,
+        "How many days does February have in a leap year?",
+        160,
+    )
+    .await?;
     let lowered = spoken.to_lowercase().replace('\u{2019}', "'");
     for opener in [
         "certainly",
@@ -446,7 +451,7 @@ async fn self_test(
 
     // The assistant has no tools. Saying so is fine; implying it acted is the failure, and it
     // is the one a listener cannot detect - nothing happens either way.
-    let refusal = talker_reply(llama, "Set a timer for ten minutes.").await?;
+    let refusal = talker_reply(llama, "Set a timer for ten minutes.", 160).await?;
     let lowered = refusal.to_lowercase().replace('\u{2019}', "'");
     if [
         "i've set",
@@ -475,6 +480,26 @@ async fn self_test(
         return Err(format!("the assistant did not say it cannot do that: {refusal}").into());
     }
     println!("Talker: {refusal}");
+
+    // Brevity must lose to an explicit request. Asked for every month, the persona this
+    // replaced answered that it depends and then declined to list them, which reads as rude
+    // and leaves the question unanswered.
+    let listed = talker_reply(
+        llama,
+        "How many days does each month have? Tell me all twelve.",
+        400,
+    )
+    .await?;
+    let lowered = listed.to_lowercase();
+    if let Some(missing) = ["january", "february", "june", "december"]
+        .iter()
+        .find(|month| !lowered.contains(**month))
+    {
+        return Err(
+            format!("the reply left out {missing} when asked for all twelve: {listed}").into(),
+        );
+    }
+    println!("Talker listed every month, {} characters", listed.len());
 
     // The filter slot, on the shipped instruction and through the same parser the session
     // uses. Its two failure modes are silent from anywhere else: it answers the question
@@ -560,11 +585,15 @@ async fn self_test(
 async fn talker_reply(
     llama: &LlamaEngine,
     said: &str,
+    tokens: usize,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let messages = vec![("system", TALKER.to_string()), ("user", said.to_string())];
+    let messages = vec![
+        ("system", crate::bridge::compose_prompt(PERSONA)),
+        ("user", said.to_string()),
+    ];
     Ok(llama
         .client()
-        .stream_completion_with(SlotKind::Talker, &messages, 160, 0.7, |_| true)
+        .stream_completion_with(SlotKind::Talker, &messages, tokens, 0.7, |_| true)
         .await?
         .text
         .trim()
@@ -677,7 +706,7 @@ mod tests {
     #[test]
     fn the_default_prompt_is_embedded_and_valid() {
         let o = options(&[]).unwrap().unwrap();
-        assert_eq!(o.system_prompt, TALKER);
+        assert_eq!(o.system_prompt, PERSONA);
         assert!(validate_prompt(&o.system_prompt).is_ok());
     }
 }

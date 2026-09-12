@@ -491,13 +491,14 @@ impl RemoteRunner {
                 self.capture.reset_capture();
             }
             Input::Control(Control::ClearHistory { system_prompt }) => {
-                if let Some(prompt) = system_prompt.as_deref() {
-                    crate::bridge::validate_prompt(prompt)?;
-                }
-                let tasks = self.session.clear_history(
-                    Some(system_prompt.unwrap_or_else(|| self.default_prompt.clone())),
-                    self.now(),
-                );
+                let prompt = match system_prompt.as_deref() {
+                    Some(custom) => {
+                        crate::bridge::validate_prompt(custom)?;
+                        crate::bridge::compose_prompt(custom)
+                    }
+                    None => self.default_prompt.clone(),
+                };
+                let tasks = self.session.clear_history(Some(prompt), self.now());
                 self.dispatch(tasks);
                 self.capture.reset_capture();
                 self.input = Utterance::default();

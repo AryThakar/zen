@@ -144,7 +144,7 @@ async fn zen_attach(
     let session_prompt = match system_prompt.filter(|p| !p.trim().is_empty()) {
         Some(prompt) => {
             crate::bridge::validate_prompt(&prompt)?;
-            prompt
+            crate::bridge::compose_prompt(&prompt)
         }
         None => options.system_prompt.clone(),
     };
