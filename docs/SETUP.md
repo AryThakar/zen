@@ -60,7 +60,7 @@ Together these take about 5.8 GB.
 | `model\Qwen ASR\qwen3-asr-1.7b-q4_k.gguf` | 1.49 GB | [cstr/qwen3-asr-1.7b-GGUF](https://huggingface.co/cstr/qwen3-asr-1.7b-GGUF) |
 | `model\Qwen TTS\qwen-talker-0.6b-base-Q4_K_M.gguf` | 629 MB | [CC-TM/Qwen3-TTS-GGUF](https://huggingface.co/CC-TM/Qwen3-TTS-GGUF) |
 | `model\Qwen TTS\qwen-tokenizer-12hz-Q4_K_M.gguf` | 255 MB | same repository |
-| `model\VAD\silero_vad_v6.onnx` | 1.2 MB | an ONNX model from the [Silero VAD v6.0 release](https://github.com/snakers4/silero-vad/releases/tag/v6.0), saved under this name |
+| `model\VAD\silero_vad_v6.onnx` | 1.2 MB | a [Silero VAD](https://github.com/snakers4/silero-vad) ONNX export saved under this name. Zen needs a graph whose input frame is 576 samples at 16 kHz; `src/silero_vad/data/silero_vad_16k_op15.onnx` is the current file of that shape. The copy Zen was tested with (checksum below) matches no file published in that repository today, so check a fresh download against the frame-size test in `src/audio.rs` before relying on it. |
 
 The SHA-256 checksums of the files Zen was tested with are below. For the five GGUF files these
 match the checksums published on Hugging Face at the time of writing.
