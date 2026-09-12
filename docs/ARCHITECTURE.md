@@ -113,8 +113,12 @@ current value, and **Set myself** fixes it instead.
 ```text
 IDLE -> LISTENING -> TRANSCRIBING -> THINKING -> PREPARING -> SPEAKING
             ^              |           |           |           |
-            +--------------+-----------+-----------+-----------+
-                 confirmed speech interrupts any active work
+            |              +           |           |           |
+            |   speech here continues  |           |           |
+            |     the same question    |           |           |
+            +--------------------------+-----------+-----------+
+                  confirmed speech interrupts work that has
+                    already produced something to cut off
 ```
 
 - Every turn is fenced by a permanent cancellation flag and a monotonically increasing
@@ -142,8 +146,12 @@ several unanswered questions in the window, and the next reply is composed again
 them at once.
 
 Before each request the engine applies the model's real chat template, counts tokens with its
-tokenizer, reserves the reply budget plus 256 tokens, and evicts complete old exchanges until
-the request fits. Oversized instructions or an oversized latest input fail explicitly rather
+tokenizer, reserves the reply budget plus 256 tokens, and evicts complete old exchanges when
+the request no longer fits. Eviction goes to half the window rather than just under the limit:
+every eviction moves the prompt prefix and costs the server its cached KV, so what a long
+conversation pays is how often that happens, not how much is dropped. Measured with the real
+system prompt and turns the length of a live session, the window first fills at turn 64 and
+then evicts about once every 34 turns, never holding fewer than 56 turns. Oversized instructions or an oversized latest input fail explicitly rather
 than being silently truncated.
 
 ## Between the recogniser and the speaker
@@ -166,9 +174,11 @@ symbols as words.
 
 **Chunking.** Every phrase boundary is a separate call to a synthesiser that cannot see the
 text on either side, so intonation restarts at each one. Chunking therefore has a cost, paid
-only where it buys something. This synthesiser streams, with first audio at about 620 ms
-whatever it is given, so a short first phrase buys almost nothing: a reply of one or two
-sentences is spoken whole. Longer replies are released in stretches of at most sixty words,
+only where it buys something. This synthesiser streams, with first audio at about 600 ms
+whatever it is given, so a short first phrase buys almost nothing: an ordinary reply is spoken
+whole. The gate is also on the piece released, not only on the buffer: without that, the first
+sentence to finish went out however short it was, and a reply arrived as fragments of eight and
+twenty-two words. Longer replies are released in stretches of at most ninety words,
 which also bounds what one interruption can cost. Word limits and a UTF-8 byte ceiling cover
 unpunctuated and unspaced scripts, and decimal lookahead keeps `3.14` in one phrase.
 
@@ -176,7 +186,7 @@ unpunctuated and unspaced scripts, and decimal lookahead keeps `3.14` in one phr
 
 - `src/voice.rs` runs synthesis on a worker thread that can be cancelled mid-phrase, with a
   bounded job queue so fast generation cannot outrun it. Qwen3-TTS streams 24 kHz PCM in
-  roughly 250 ms codec chunks, and cancellation is polled between chunks (4 ms to acknowledge
+  roughly 250 ms codec chunks, and cancellation is polled between chunks (5 ms to acknowledge
   in the self-test).
 - Reply audio travels to the page as raw bytes on its own channel, not base64 inside JSON,
   which would cost a third more bandwidth and a copy per block.

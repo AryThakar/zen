@@ -32,22 +32,22 @@ This is the exact set of files Zen loads, as tested:
 │   └── cudart64_13.dll  cublas64_13.dll  cublasLt64_13.dll
 ├── lib\
 │   ├── qwen.dll
-│   └── ggml.dll  ggml-base.dll  ggml-cpu.dll
+│   └── ggml.dll  ggml-base.dll  ggml-cpu.dll  ggml-cuda.dll
 └── model\
     ├── E2B\
     │   ├── gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf
     │   └── mtp-gemma-4-E2B-it.gguf
     ├── Qwen ASR\
     │   ├── qwen3-asr-1.7b-q4_k.gguf
-    │   └── crispasr.dll  ggml.dll  ggml-base.dll  ggml-cpu.dll  ggml-cuda.dll
+    │   └── crispasr.dll  ggml.dll  ggml-base.dll  ggml-cpu.dll
     └── Qwen TTS\
-        ├── qwen-talker-0.6b-base-Q4_K_M.gguf
+        ├── qwen-talker-0.6b-base-Q4_K_M.gguf   (or -Q8_0, preferred when present)
         ├── qwen-tokenizer-12hz-Q4_K_M.gguf
         ├── user_ref_voice.wav
         └── user_ref_text.txt
 ```
 
-Together these take about 5.8 GB.
+Together these take about 5.9 GB. The Q8 talker below is optional and adds a further 364 MB.
 
 ## Models
 
@@ -57,18 +57,25 @@ Together these take about 5.8 GB.
 | `model\E2B\mtp-gemma-4-E2B-it.gguf` | 59 MB | same repository: the Multi-Token Prediction drafter |
 | `model\Qwen ASR\qwen3-asr-1.7b-q4_k.gguf` | 1.49 GB | [cstr/qwen3-asr-1.7b-GGUF](https://huggingface.co/cstr/qwen3-asr-1.7b-GGUF) |
 | `model\Qwen TTS\qwen-talker-0.6b-base-Q4_K_M.gguf` | 629 MB | [CC-TM/Qwen3-TTS-GGUF](https://huggingface.co/CC-TM/Qwen3-TTS-GGUF) |
+| `model\Qwen TTS\qwen-talker-0.6b-base-Q8_0.gguf` | 993 MB | same repository — optional, see below |
 | `model\Qwen TTS\qwen-tokenizer-12hz-Q4_K_M.gguf` | 255 MB | same repository |
+
+Zen prefers the Q8 talker when it is present and falls back to Q4_K_M otherwise
+(`talker_file` in `src/tts.rs`), so choosing between them is a matter of which file is in
+the folder. Q8 sounds better and costs about 320 MB more graphics memory, which is most of
+what is spare on a 4 GB card; backing it out is deleting the file again.
 
 Voice activity detection needs no download: Silero's export is compiled into `zen.exe`.
 
-The SHA-256 checksums of the files Zen was tested with are below. For the five GGUF files these
-match the checksums published on Hugging Face at the time of writing.
+The SHA-256 checksums of the files Zen was tested with are below. For the GGUF files these match
+the checksums published on Hugging Face at the time of writing.
 
 ```text
 e531007218dfab990486a5de7676a6932d6ea8dea233d1f698d7c21cf8a16889  gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf
 586f2460b909008640981ec34060aa864e03c144fbabfb3173c4335087e4aae0  mtp-gemma-4-E2B-it.gguf
 ec197cef7ccc589fdcae1becc3f4a3de119d0a41e790b898b519b1a048dad8d4  qwen3-asr-1.7b-q4_k.gguf
 4b468ec7b1f62b90ef4ca316c0aa57deadfd54b2cf9651703ea753cedaf04226  qwen-talker-0.6b-base-Q4_K_M.gguf
+d54dbaf10591421fa764ed630d764efa717ae40cd959bd48c66d4eb1af226426  qwen-talker-0.6b-base-Q8_0.gguf
 cf3788b4d50aaa665fb6e57c170396aae03a3555fea52d2b5d0cda902d658039  qwen-tokenizer-12hz-Q4_K_M.gguf
 ```
 
@@ -97,8 +104,15 @@ process for `llama-server`), so nothing links against them at build time.
 
 A CUDA build of [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` with its
 DLLs, and the CUDA 13 runtime and cuBLAS DLLs it needs. The build must be recent enough to
-support Gemma 4 Multi-Token Prediction drafting (`--spec-type draft-mtp`). Zen was tested with
-a build that reports `version: 1 (720d7fa)`.
+support Gemma 4 Multi-Token Prediction drafting (`--spec-type draft-mtp`); check with
+`llama-server.exe --help | Select-String "draft-mtp"` before installing.
+
+The official Windows releases work as-is, and are what to use unless you need a backend they
+do not publish. From the [releases page](https://github.com/ggml-org/llama.cpp/releases), take
+both `llama-<build>-bin-win-cuda-13.3-x64.zip` and `cudart-llama-bin-win-cuda-13.3-x64.zip`
+and unpack them together into `bin\`. Tested here with build `b10930`, which covers seven GPU
+architectures and so runs on anything from RTX 20-series to RTX 50-series. A locally compiled
+server also works; Zen was first tested against one reporting `version: 1 (720d7fa)`.
 
 Zen starts it with these flags (see `LlamaConfig::launch_args` in `src/engine.rs`):
 
@@ -124,18 +138,42 @@ it, Zen points the DLL search path at this folder and preloads `ggml-base.dll`, 
 and `ggml.dll` from here, so these copies are bound rather than the llama.cpp ones in `bin\`.
 Recognition runs on the CPU, using the number of cores minus four as threads, clamped to 2–8.
 
+Take `libcrispasr-windows-x86_64.tar.gz` from the
+[releases page](https://github.com/CrispStrobe/CrispASR/releases) and copy `bin\crispasr.dll`
+and the three ggml DLLs beside it into this folder. Tested here with `v0.8.32`. The
+`crispasr-windows-*.zip` assets hold the command-line tool and no DLL, and the CUDA assets are
+ten times the size for nothing: recognition never touches the GPU, and a `ggml-cuda.dll` placed
+here is 68 MB that is never loaded.
+
 ### `lib\`: qwentts.cpp
 
 `qwen.dll`, the shared library from
 [qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp), built with `-DQWEN_SHARED=ON`
-and CUDA. Zen uses its C API (`qt_init`, `qt_synthesize`, `qt_extract_voice_ref` and related
-functions). No import library ships with the DLL, so it is loaded at runtime.
+and CUDA, **with the four ggml DLLs from that same build beside it**. Zen uses its C API
+(`qt_init`, `qt_synthesize`, `qt_extract_voice_ref` and related functions). No import library
+ships with the DLL, so it is loaded at runtime.
+
+Upstream publishes no binaries, so this build is released with Zen: take
+`qwentts-runtime-windows-x64-cuda13.zip` from the
+[Zen releases page](https://github.com/AryThakar/zen/releases) and unpack it into `lib\`.
+To build it yourself, or for a GPU vendor other than NVIDIA, see
+[BUILDING_NATIVE.md](BUILDING_NATIVE.md).
 
 Windows looks for a DLL's dependencies one directory at a time, and `qwen.dll` needs both ggml
-and CUDA. Zen therefore preloads `cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` and
-the ggml DLLs by absolute path before loading `qwen.dll`, from `bin\` when it contains
-`ggml.dll`, otherwise from `lib\`. In the tested layout that is the CUDA ggml in `bin\`, so
-`qwen.dll` must be built against a ggml compatible with the llama.cpp build there.
+and CUDA, so Zen preloads them by absolute path before loading it:
+
+- **ggml** comes from `lib\` when all four of `ggml.dll`, `ggml-base.dll`, `ggml-cpu.dll` and
+  `ggml-cuda.dll` are there, and from `bin\` otherwise. All four or none: a directory holding
+  one build's ggml beside another's CUDA backend registers no backend at all and drops
+  synthesis to the processor without reporting anything.
+- **the CUDA runtime** comes from `lib\` if it is there and `bin\` if not. It is versioned
+  rather than built against anything here, so one copy serves both the server and synthesis —
+  `cublasLt64_13.dll` alone is 463 MB and does not want duplicating.
+
+This is why `lib\` may carry its own ggml: it lets `llama-server` run on the official
+multi-architecture build while synthesis keeps the ggml it was actually compiled against.
+The two never share a loaded library — `llama-server` is a child process and synthesis runs in
+an isolated worker of its own.
 
 ## Verifying the installation
 
@@ -152,17 +190,18 @@ i5-12450H, 16 GB RAM) it printed:
 Starting Zen from C:\zen-ai
 Loading isolated speech recognition...
 Loading isolated speech synthesis...
-TTS: first chunk 622 ms, 2.80 s audio, 1.30 s wall
-TTS delivery: largest chunk gap 148 ms, startup buffer needed 11 ms
-ASR: 1728 ms, transcript: Hello, my name is Zen. I'm ready to help you.
+TTS: first chunk 605 ms, 2.96 s audio, 1.46 s wall
+TTS delivery: largest chunk gap 175 ms, startup buffer needed 16 ms
+ASR: 1641 ms, transcript: Hello, my name is Zen. I'm ready to help you.
 Model: You said the blue drawer.
-Talker: February has twenty-nine days in a leap year.
-Talker: I can't set a timer for you, Arya. I can talk through anything with you instead.
+Talker: February has twenty nine days in a leap year.
+Talker: I can't set a timer for you, Arya. I don't have the ability to set timers or control devices.
+Talker listed every month, 274 characters
 Filter: "wut is the wether tooday" -> What is the weather today?
 Filter: "can you turn on the kitchen lights" -> Can you turn on the kitchen lights?
 Filter: "uh um uh" -> asked for a repeat: Sorry, I missed that - could you say it again?
 Filter: "so i was going through the notes from the meeting yesterday and ... before friday" -> So I was going through the notes ... before Friday
-TTS cancellation acknowledged in 4 ms
+TTS cancellation acknowledged in 5 ms
 Self-test passed, including synthesis after interruption. Speaker acoustics and audible interruption timing require a live session.
 ```
 

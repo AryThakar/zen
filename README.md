@@ -46,18 +46,22 @@ executable.
 - **Private by construction.** No cloud APIs, account or telemetry. The model server is bound
   to loopback (enforced in code), the speech workers use authenticated loopback sockets, and
   audio, transcripts and prompts are never written to disk.
-- **Natural turn-taking.** Interrupt Zen at any point. Confirmed speech, not just a loud noise,
-  stops the reply, and history keeps only the words you actually heard, so the model never
-  believes it told you something you missed.
+- **Natural turn-taking.** Talk over Zen and he stops: confirmed speech, not just a loud noise,
+  ends the reply, and history keeps only the words you actually heard, so the model never
+  believes it told you something you missed. Speaking while he is still working out what you
+  said is treated as the rest of the same question rather than an interruption, so a long
+  question is never cut in half by its own second sentence.
 - **An end-of-turn pause that learns you.** A fixed silence threshold always cuts somebody off.
   Zen notices when you carry on straight after being cut off, waits longer next time, and
   relaxes again over clean turns, within 0.6–2.0 s.
 - **Transcript repair before answering.** A dedicated model slot fixes misrecognised words and
   translates non-English speech into English. A guard rejects "corrections" that invent words
   you never said, and a repair that runs out of budget falls back to the raw transcript.
-- **Streaming speech.** Replies are synthesised phrase by phrase and start playing about 0.6 s
-  after synthesis begins. A jitter buffer, seam crossfades and an envelope-following limiter
-  keep playback clean.
+- **Streaming speech.** Replies start playing about 0.6 s after synthesis begins. A jitter
+  buffer, equal-power seam crossfades and an envelope-following limiter keep playback clean.
+  An ordinary reply is synthesised in one piece rather than split, because every split is a
+  separate call to the synthesiser that restarts the contour and resets the emphasis; the
+  window before Zen speaks is a little longer for it.
 - **Fits a 4 GB laptop GPU.** One `llama-server` with two fixed slots, a stateless filter and a
   stateful talker with a cached prompt prefix, plus Multi-Token Prediction drafting and a q4_0
   KV cache. The whole stack, speech synthesis included, runs in about 3.6 GB of VRAM.
@@ -69,7 +73,7 @@ executable.
 
 ## Performance
 
-Measured on 11 September 2026 with the release build, on an NVIDIA RTX 3050 Laptop GPU (4 GB),
+Measured on 13 September 2026 with the release build, on an NVIDIA RTX 3050 Laptop GPU (4 GB),
 Intel Core i5-12450H and 16 GB RAM, Windows 11.
 
 | Measurement | Result | Source |
@@ -78,11 +82,11 @@ Intel Core i5-12450H and 16 GB RAM, Windows 11.
 | LLM prompt processing, ~20-token prompt | 25–53 ms | same |
 | VRAM, LLM alone (two 8k slots + drafter) | 1.6 GB | `nvidia-smi` |
 | VRAM, live session (LLM + TTS) | 3.6 GB of 4 GB | `nvidia-smi` |
-| TTS time to first audio | 622 ms | `zen.exe --self-test` |
-| TTS speed | 2.80 s of speech in 1.30 s | `zen.exe --self-test` |
-| TTS cancellation | acknowledged in 4 ms | `zen.exe --self-test` |
-| ASR, 2.8 s utterance | 1.73 s | `zen.exe --self-test` |
-| Typed message to Zen speaking, warm session | ~1.2 s (1177 ms, 1192 ms) | scripted session in the real window |
+| TTS time to first audio | 605 ms | `zen.exe --self-test` |
+| TTS speed | 2.96 s of speech in 1.46 s | `zen.exe --self-test` |
+| TTS cancellation | acknowledged in 5 ms | `zen.exe --self-test` |
+| ASR, 2.9 s utterance | 1.64 s | `zen.exe --self-test` |
+| Typed message to Zen speaking, warm session | ~1.5 s (1482 ms, 1575 ms) | scripted session in the real window |
 
 The first turn after launch also loads the models, which took about 14 s on this machine.
 
@@ -116,6 +120,8 @@ The page acknowledges each block of audio only once it has actually played. Thos
 acknowledgements drive backpressure and decide what enters the conversation history.
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the full design and the reasoning behind it
+- [docs/BUILDING_NATIVE.md](docs/BUILDING_NATIVE.md): building the native libraries yourself,
+  for another GPU vendor or platform
 - [PROTOCOL.md](PROTOCOL.md): the IPC contract between the interface and the engine
 
 ## Screenshots
@@ -131,7 +137,7 @@ acknowledgements drive backpressure and decide what enters the conversation hist
 - **Windows 11** (WebView2 is part of the OS). Windows is the only supported platform today.
 - **NVIDIA GPU with 4 GB of VRAM** and a driver that supports CUDA 13, the version of the
   bundled CUDA runtime DLLs
-- **16 GB RAM** and about **5.8 GB of disk** for the models and native libraries
+- **16 GB RAM** and about **5.9 GB of disk** for the models and native libraries
 - To build: **Rust 1.91+** (MSVC toolchain). **Node.js 22+** only for the interface tests.
 
 ## Getting started
@@ -146,7 +152,7 @@ cargo build --release --locked
 
 ### 2. Install the models and native libraries
 
-The weights and native runtimes (about 5.8 GB) are not part of this repository. Zen looks for
+The weights and native runtimes (about 5.9 GB) are not part of this repository. Zen looks for
 them in an **installation root**:
 
 ```text
@@ -161,7 +167,10 @@ them in an **installation root**:
 ```
 
 [docs/SETUP.md](docs/SETUP.md) lists every file, where to get it, and the checksums of the
-exact files Zen was tested with.
+exact files Zen was tested with. Two of the three native runtimes have official Windows builds;
+the third is attached to Zen's [releases](https://github.com/AryThakar/zen/releases) because
+upstream publishes none. To build any of them yourself — for AMD, Intel, or a platform other
+than Windows — see [docs/BUILDING_NATIVE.md](docs/BUILDING_NATIVE.md).
 
 ### 3. Run
 
