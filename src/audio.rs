@@ -479,8 +479,22 @@ impl Segmenter {
             self.silence_run += 1;
         }
 
+        // Past the cap, end on the next real gap rather than mid-word. Cutting a sentence in
+        // half loses it entirely: the speaker carries straight on, that continuation opens a
+        // new turn, and the half already captured is dropped with the utterance it belonged to.
+        // A person pauses within a second or two of passing thirty seconds; a television does
+        // not, which is what the hard stop below is for.
+        let endpoint = if self.turn_frames >= self.config.max_turn_frames {
+            self.config
+                .endpoint
+                .frames()
+                .min(SegmenterConfig::frames_for_ms(250))
+        } else {
+            self.config.endpoint.frames()
+        };
+
         // The turn is over. Everything still buffered goes out with it.
-        if self.silence_run >= self.config.endpoint.frames() {
+        if self.silence_run >= endpoint {
             let chunk = self.close(SegmentEnd::Silence);
             return SegmentOutcome {
                 chunk,
@@ -488,9 +502,10 @@ impl Segmenter {
             };
         }
 
-        // Nobody has stopped talking for long enough to end this, and it has gone on past any
-        // human turn. Answer what was heard rather than listening forever.
-        if self.turn_frames >= self.config.max_turn_frames {
+        // Nothing resembling a gap has arrived even after the endpoint was tightened, so this
+        // is not a person: a television, a call on speakerphone, a microphone left open.
+        // Answer what was heard rather than listening forever.
+        if self.turn_frames >= self.config.max_turn_frames * 2 {
             let chunk = self.close(SegmentEnd::MaximumLength);
             return SegmentOutcome {
                 chunk,
@@ -1559,7 +1574,8 @@ mod tests {
         // a person finishing a thought. Waiting for a pause that is not coming leaves every
         // word already said unanswered, which is the worst of both.
         let mut segmenter = Segmenter::new(config());
-        let cap = segmenter.config.max_turn_frames;
+        // Speech with no gap at all runs to the hard stop, at twice the cap.
+        let cap = segmenter.config.max_turn_frames * 2;
         let mut ended_at = None;
         for frames in 1..=cap + 10 {
             if segmenter.push_turn(frame(), 0.9).turn_ended {
