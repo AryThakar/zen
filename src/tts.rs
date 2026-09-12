@@ -565,9 +565,28 @@ fn preload_dependencies(library_path: &Path) {
         "ggml.dll",
     ];
 
-    for directory in [sibling_bin
-        .as_ref()
-        .filter(|p| p.join("ggml.dll").is_file())
+    // qwen.dll's own directory wins when it carries the CUDA backend as well as ggml itself.
+    // That is a set shipped together and built against each other, and it must not be mixed
+    // with a different llama.cpp build's ggml: the official Windows releases link no backend
+    // into ggml.dll at all - they load them at runtime, which llama-server does and qwen.dll
+    // does not - so borrowing their ggml leaves synthesis with no backend registered.
+    //
+    // Otherwise bin/, which is where a hand-built layout keeps the one CUDA ggml that the
+    // server and synthesis were both compiled against and share.
+    // The whole set, not merely some of it. A directory holding one build's ggml.dll beside
+    // another's ggml-cuda.dll registers no backend at all and synthesis silently drops to the
+    // processor: measured here as 3.2 s of speech taking 16.7 s instead of 1.5 s. Requiring
+    // every piece means whoever assembled the directory put a matching set there on purpose.
+    let matched_set = library_dir.as_ref().filter(|p| {
+        ["ggml.dll", "ggml-base.dll", "ggml-cpu.dll", "ggml-cuda.dll"]
+            .iter()
+            .all(|name| p.join(name).is_file())
+    });
+
+    for directory in [matched_set
+        .or(sibling_bin
+            .as_ref()
+            .filter(|p| p.join("ggml.dll").is_file()))
         .or(library_dir.as_ref())]
     .into_iter()
     .flatten()
