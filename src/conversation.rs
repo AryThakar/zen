@@ -168,12 +168,6 @@ pub struct WindowBudget {
     pub reply_tokens: usize,
     /// Held back for template overhead and counting error.
     pub safety_tokens: usize,
-    /// Extra room freed whenever eviction happens.
-    ///
-    /// Without it, the window sits exactly at its limit and evicts one turn every single turn -
-    /// and each eviction moves the prefix boundary, costing a full re-prefill. Evicting in
-    /// occasional larger steps trades a little context for far fewer stalls.
-    pub eviction_slack_tokens: usize,
     /// Recent turns preferred during eviction, provided the hard budget still fits.
     ///
     /// The immediate exchange is what the next reply is about; dropping it to fit is worse than
@@ -188,7 +182,6 @@ impl WindowBudget {
             capacity_tokens,
             reply_tokens: 512,
             safety_tokens: 256,
-            eviction_slack_tokens: 768,
             protected_turns: 4,
         }
     }
@@ -200,10 +193,16 @@ impl WindowBudget {
             .saturating_sub(self.safety_tokens)
     }
 
-    /// Level eviction reduces to, leaving slack before the next one is needed.
+    /// How far down to evict, once evicting at all.
+    ///
+    /// Every eviction moves the prompt's prefix, which throws away the model server's cached
+    /// KV and makes the next reply re-read the whole window before it can speak. The cost of
+    /// a long conversation is therefore not how much gets evicted, it is how often. Trimming
+    /// just past the limit leaves the window still full, so the next turn evicts again and
+    /// the stall lands turn after turn. Dropping to half spends it once and buys a long quiet
+    /// stretch, and the re-read it forces is half as long as well.
     pub fn eviction_target(&self) -> usize {
-        self.prompt_limit()
-            .saturating_sub(self.eviction_slack_tokens)
+        self.prompt_limit() / 2
     }
 }
 
@@ -222,8 +221,6 @@ pub struct Conversation {
     turns: VecDeque<Utterance>,
     budget: WindowBudget,
     evictions: usize,
-    /// The server cached a prefix that no longer matches this conversation.
-    prefix_dead: bool,
 }
 
 impl Conversation {
@@ -233,7 +230,6 @@ impl Conversation {
             turns: VecDeque::new(),
             budget,
             evictions: 0,
-            prefix_dead: false,
         }
     }
 
@@ -242,7 +238,6 @@ impl Conversation {
     /// change without unloading the model, which is the difference between starting
     /// fresh instantly and waiting for five gigabytes to load again.
     pub fn set_system(&mut self, system: impl Into<String>) {
-        self.prefix_dead = true;
         self.system = system.into();
     }
 
@@ -250,7 +245,6 @@ impl Conversation {
     /// window being emptied, not the session ending: the model stays loaded, so
     /// starting fresh costs nothing but the history itself.
     pub fn clear_history(&mut self) {
-        self.prefix_dead = true;
         self.turns.clear();
         self.evictions = 0;
     }
@@ -325,15 +319,6 @@ impl Conversation {
                 .sum::<usize>()
     }
 
-    /// Whether the model server's cached prefix is stale, clearing the flag.
-    ///
-    /// Set by anything that changes the prompt other than appending to it: eviction, new
-    /// instructions, a cleared history. Kept here rather than at the call sites because a
-    /// question and a reply are recorded by different paths, and either can evict.
-    pub fn take_prefix_invalidated(&mut self) -> bool {
-        std::mem::take(&mut self.prefix_dead)
-    }
-
     fn enforce_budget(&mut self) -> WindowChange {
         if self.estimated_tokens() <= self.budget.prompt_limit() {
             return WindowChange::default();
@@ -362,7 +347,6 @@ impl Conversation {
         }
         if evicted > 0 {
             self.evictions += 1;
-            self.prefix_dead = true;
         }
         WindowChange {
             evicted_turns: evicted,
@@ -573,5 +557,60 @@ mod tests {
         let budget = WindowBudget::for_slot(8_192);
         assert!(budget.prompt_limit() < 8_192);
         assert!(budget.eviction_target() < budget.prompt_limit());
+    }
+
+    #[test]
+    fn a_full_window_evicts_in_one_large_step_rather_than_every_turn() {
+        // Each eviction costs a re-prefill the speaker hears as silence, so what matters is
+        // how many happen across a long conversation, not how many turns each one drops.
+        // Shaving the window back to just under its limit would evict on nearly every turn
+        // from then on; going to half must not.
+        let mut chat = Conversation::new("You are Zen.", WindowBudget::for_slot(8_192));
+        let question = "word ".repeat(40);
+        let answer = "reply ".repeat(60);
+        let mut turns_after_first_eviction = 0;
+        let mut evictions_after_first = 0;
+        for _ in 0..200 {
+            let evicted = chat.record_user(question.clone()).evicted_turns > 0;
+            let mut reply = SpokenReply::new();
+            reply.played(&answer);
+            let evicted = evicted || chat.record_reply(reply, false).evicted_turns > 0;
+            if chat.evictions() > 0 {
+                turns_after_first_eviction += 1;
+                evictions_after_first += usize::from(evicted);
+            }
+        }
+        assert!(
+            turns_after_first_eviction > 100,
+            "the window must fill well before the conversation ends, or this proves nothing"
+        );
+        // Once evicting, a window trimmed to its limit evicts about every other turn. Half a
+        // window of slack has to buy far more than that.
+        let turns_per_eviction = turns_after_first_eviction / evictions_after_first.max(1);
+        assert!(
+            turns_per_eviction >= 10,
+            "evicted once every {turns_per_eviction} turns ({evictions_after_first} times in {turns_after_first_eviction} turns); halving the window should buy many quiet turns"
+        );
+    }
+
+    #[test]
+    fn eviction_keeps_enough_history_to_stay_in_the_conversation() {
+        // Half a window is a real trade: it has to leave enough turns behind that Zen still
+        // knows what is being discussed.
+        let mut chat = Conversation::new("You are Zen.", WindowBudget::for_slot(8_192));
+        let question = "word ".repeat(40);
+        let answer = "reply ".repeat(60);
+        for _ in 0..200 {
+            chat.record_user(question.clone());
+            let mut reply = SpokenReply::new();
+            reply.played(&answer);
+            chat.record_reply(reply, false);
+        }
+        assert!(chat.evictions() > 0, "the window must have filled");
+        assert!(
+            chat.turn_count() >= 12,
+            "only {} turns survived eviction",
+            chat.turn_count()
+        );
     }
 }
