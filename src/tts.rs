@@ -555,15 +555,14 @@ fn preload_dependencies(library_path: &Path) {
         .and_then(Path::parent)
         .map(|root| root.join("bin"));
 
-    let order = [
-        "cudart64_13.dll",
-        "cublas64_13.dll",
-        "cublasLt64_13.dll",
-        "ggml-base.dll",
-        "ggml-cpu.dll",
-        "ggml-cuda.dll",
-        "ggml.dll",
-    ];
+    // The CUDA runtime is versioned, not built against anything here, so both the server and
+    // synthesis can share one copy. It is half a gigabyte - cublasLt alone is 463 MB - and a
+    // second copy beside qwen.dll would be paid for on every download for nothing. Loaded
+    // first and by absolute path, so whatever imports it later binds to the one already in
+    // the process, wherever that came from.
+    const CUDA_RUNTIME: [&str; 3] = ["cudart64_13.dll", "cublas64_13.dll", "cublasLt64_13.dll"];
+    // These must match each other and match qwen.dll, so they come from one directory.
+    const GGML: [&str; 4] = ["ggml-base.dll", "ggml-cpu.dll", "ggml-cuda.dll", "ggml.dll"];
 
     // qwen.dll's own directory wins when it carries the CUDA backend as well as ggml itself.
     // That is a set shipped together and built against each other, and it must not be mixed
@@ -583,21 +582,30 @@ fn preload_dependencies(library_path: &Path) {
             .all(|name| p.join(name).is_file())
     });
 
-    for directory in [matched_set
+    let ggml_dir = matched_set
         .or(sibling_bin
             .as_ref()
             .filter(|p| p.join("ggml.dll").is_file()))
-        .or(library_dir.as_ref())]
-    .into_iter()
-    .flatten()
-    {
+        .or(library_dir.as_ref());
+
+    // Wherever the runtime actually is: beside qwen.dll if it was shipped that way, otherwise
+    // bin/, which is where the server's copy lives.
+    let cuda_dir = [library_dir.as_ref(), sibling_bin.as_ref()]
+        .into_iter()
+        .flatten()
+        .find(|p| p.join(CUDA_RUNTIME[0]).is_file());
+
+    for (directory, names) in [(cuda_dir, &CUDA_RUNTIME[..]), (ggml_dir, &GGML[..])] {
+        let Some(directory) = directory else {
+            continue;
+        };
         let wide: Vec<u16> = directory
             .as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
         unsafe { SetDllDirectoryW(wide.as_ptr()) };
-        for name in order {
+        for name in names {
             let candidate = directory.join(name);
             if !candidate.is_file() {
                 continue;
