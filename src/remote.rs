@@ -100,13 +100,10 @@ async fn run_owned(
             Arc::new(crate::native::NativeEngine::load("tts", &root)?);
         // Chrome supplies AEC/NS/AGC and the capture graph filters the speech band, so this
         // side only decides when someone is speaking.
-        let capture = CapturePipeline::new(
-            root.join("model/VAD/silero_vad.onnx"),
-            SegmenterConfig {
-                endpoint,
-                ..SegmenterConfig::default()
-            },
-        )?;
+        let capture = CapturePipeline::new(SegmenterConfig {
+            endpoint,
+            ..SegmenterConfig::default()
+        })?;
         Ok((asr, voice, capture))
     })
     .await??;

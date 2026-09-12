@@ -9,6 +9,7 @@ under its authors' licenses and is not affected by Zen's license.
 | Component | Use in Zen | License |
 | --- | --- | --- |
 | [Inter](https://rsms.me/inter/) typeface | Interface font, `src/client/inter.woff2` | SIL Open Font License 1.1 — full text in [`src/client/inter-LICENSE.txt`](src/client/inter-LICENSE.txt) |
+| [Silero VAD](https://github.com/snakers4/silero-vad) | Voice activity detection, `src/silero_vad.onnx` | MIT |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime), via the [`ort`](https://github.com/pykeio/ort) crate | Runs the Silero VAD model | MIT |
 | [Tauri](https://github.com/tauri-apps/tauri) and the other Rust crates in `Cargo.lock` | Window, IPC, async runtime, HTTP, audio resampling | Each crate's own license, predominantly MIT and/or Apache-2.0 |
 
@@ -25,7 +26,6 @@ each file goes.
 | [Gemma 4 E2B](https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF) (Unsloth QAT GGUF and MTP drafter) | Transcript repair and replies | Apache-2.0, as listed on the model page |
 | [Qwen3-ASR 1.7B](https://huggingface.co/cstr/qwen3-asr-1.7b-GGUF) (GGUF) | Speech recognition model | Apache-2.0, as listed on the model page |
 | [Qwen3-TTS 12Hz 0.6B Base](https://huggingface.co/CC-TM/Qwen3-TTS-GGUF) and its 12 Hz tokenizer (GGUF) | Speech synthesis model and codec | Apache-2.0, as listed on the model page |
-| [Silero VAD](https://github.com/snakers4/silero-vad) v6 | Voice activity detection | MIT |
 | NVIDIA CUDA runtime and cuBLAS DLLs | GPU acceleration for llama.cpp and TTS | NVIDIA CUDA Toolkit EULA |
 
 Check each project's current license before redistributing any of these files.

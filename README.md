@@ -32,7 +32,7 @@ Everything runs on your own GPU and CPU:
 
 | Stage | Model | Runtime | Runs on |
 | --- | --- | --- | --- |
-| Voice activity | Silero VAD v6 | ONNX Runtime, in process | CPU |
+| Voice activity | Silero VAD | ONNX Runtime, compiled into the app | CPU |
 | Speech to text | Qwen3-ASR 1.7B (Q4_K) | CrispASR, isolated worker process | CPU |
 | Transcript repair and reply | Gemma 4 E2B (QAT, UD-Q4_K_XL) with an MTP drafter | llama.cpp `llama-server`, supervised | GPU |
 | Text to speech | Qwen3-TTS 12Hz 0.6B Base (Q4_K_M), cloned from a reference clip | qwentts.cpp, isolated worker process | GPU |
@@ -157,8 +157,7 @@ them in an **installation root**:
 └── model\
     ├── E2B\                 Gemma 4 E2B GGUF and MTP drafter
     ├── Qwen ASR\            Qwen3-ASR GGUF, crispasr.dll and CPU ggml DLLs
-    ├── Qwen TTS\            Qwen3-TTS talker and tokenizer GGUFs, your voice reference
-    └── VAD\                 silero_vad.onnx
+    └── Qwen TTS\            Qwen3-TTS talker and tokenizer GGUFs, your voice reference
 ```
 
 [docs/SETUP.md](docs/SETUP.md) lists every file, where to get it, and the checksums of the

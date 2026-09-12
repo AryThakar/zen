@@ -45,6 +45,13 @@ const VAD_STATE_LEN: usize = 128;
 // Silero VAD
 // ============================================================================================
 
+/// Silero's published export, compiled into the binary.
+///
+/// It is 2.2 MB, it never changes between runs, and ONNX Runtime can build a session straight
+/// from memory - so there is no file to install, no path to get wrong, and no way to end up
+/// running a different voice detector than the one this was measured against.
+const SILERO_MODEL: &[u8] = include_bytes!("silero_vad.onnx");
+
 /// Silero VAD, holding its own recurrent state.
 ///
 /// The state is per-conversation, not per-frame: carrying it across utterances is what lets the
@@ -60,6 +67,19 @@ pub struct SileroVad {
 }
 
 impl SileroVad {
+    /// The export compiled into this binary. This is what the running app uses.
+    pub fn embedded() -> Result<Self, AudioError> {
+        let session = Session::builder()
+            .map_err(|error| AudioError::Onnx(error.to_string()))?
+            .commit_from_memory(SILERO_MODEL)
+            .map_err(|error| AudioError::Onnx(error.to_string()))?;
+        Ok(Self {
+            session,
+            state: vec![0.0; 2 * VAD_STATE_LEN],
+        })
+    }
+
+    /// A model from disk, for comparing exports against the compiled-in one.
     pub fn load(model: impl AsRef<Path>) -> Result<Self, AudioError> {
         let model = model.as_ref();
         if !model.is_file() {
@@ -861,12 +881,9 @@ pub struct CapturePipeline {
 }
 
 impl CapturePipeline {
-    pub fn new(
-        vad_model: impl AsRef<Path>,
-        segmenter_config: SegmenterConfig,
-    ) -> Result<Self, AudioError> {
+    pub fn new(segmenter_config: SegmenterConfig) -> Result<Self, AudioError> {
         Ok(Self {
-            vad: SileroVad::load(vad_model)?,
+            vad: SileroVad::embedded()?,
             segmenter: Segmenter::new(segmenter_config),
             pending: Vec::new(),
         })
@@ -1360,24 +1377,16 @@ mod tests {
     fn a_wrong_sized_frame_is_rejected_rather_than_reshaped() {
         // The exported Silero graph fixes the frame at 576; quietly padding or truncating would
         // produce a plausible-looking probability from the wrong audio.
-        let model = r"C:\zen-ai\model\VAD\silero_vad.onnx";
-        if !Path::new(model).is_file() {
-            return;
-        }
-        let mut vad = SileroVad::load(model).expect("load silero");
+        let mut vad = SileroVad::embedded().expect("embedded silero");
         let error = vad.probability(&[0.0; 100]).unwrap_err();
         assert!(matches!(error, AudioError::FrameSize { expected: 576, .. }));
     }
 
     #[test]
     fn silero_separates_speech_from_silence() {
-        // An end-to-end sanity check on the real model: digital silence must score low. Skipped
-        // when the model is absent so the suite still runs on a machine without it.
-        let model = r"C:\zen-ai\model\VAD\silero_vad.onnx";
-        if !Path::new(model).is_file() {
-            return;
-        }
-        let mut vad = SileroVad::load(model).expect("load silero");
+        // An end-to-end sanity check on the real model: digital silence must score low. The
+        // model is compiled in, so this runs everywhere, CI included.
+        let mut vad = SileroVad::embedded().expect("embedded silero");
         let silence = vec![0.0f32; VAD_FRAME_SAMPLES];
         let probability = vad.probability(&silence).expect("probability");
         assert!(
