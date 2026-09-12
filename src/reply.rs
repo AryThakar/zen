@@ -555,20 +555,28 @@ pub struct ChunkLimits {
 impl Default for ChunkLimits {
     fn default() -> Self {
         Self {
-            first_soft: 22,
-            first_weak: 32,
-            first_hard: 42,
-            soft: 30,
+            // Above a whole ordinary reply, so most are never cut at all. Measured in a live
+            // session, a reply runs thirty to sixty words; at twenty-two this released the last
+            // sentence end in the buffer, which was often only eight or sixteen words in, and
+            // the rest of the reply followed as two or three more separate synthesis calls.
+            first_soft: 55,
+            first_weak: 70,
+            first_hard: 85,
+            soft: 60,
             // Far enough past `soft` that a sentence running long is given real room to finish.
             // Once audio is playing there is slack to spend: a chunk only has to be ready before
             // the previous one stops, and generation runs several times faster than speech.
-            weak: 45,
+            weak: 75,
             // The ceiling on how much a single interruption can cost. Only completed phrases
             // enter history, so a phrase cut short is a phrase the listener heard and the
-            // transcript does not have. Sixty words is roughly twenty seconds - long enough to
-            // read as one passage, short enough that barging in loses little.
-            hard: 60,
-            minimum: 3,
+            // transcript does not have. Ninety words is roughly thirty-five seconds: the price
+            // of a reply that sounds like one thought instead of four.
+            hard: 90,
+            // A cut is gated on how much is buffered, but it lands on the last sentence end in
+            // that buffer, which can be far earlier. Without a floor on the piece itself, the
+            // gate opening at fifty-five words happily emitted the eight-word sentence that
+            // happened to finish first, and the listener heard the reply as fragments.
+            minimum: 12,
         }
     }
 }
@@ -859,8 +867,10 @@ mod tests {
         // Enough words ahead of the decimal to pass the first-chunk gate, so the lookahead
         // rule is what is being tested rather than the gate.
         let mut chunker = ReplyChunker::new(ChunkLimits::default());
-        for _ in 0..5 {
-            assert!(chunker.push("Checking the reading again. ").is_none());
+        // Past the gate and carrying no sentence end yet, so the decimal is the first candidate
+        // boundary and the lookahead rule is what is being tested rather than the gate.
+        for _ in 0..ChunkLimits::default().first_soft {
+            assert!(chunker.push("checking ").is_none());
         }
         assert!(chunker
             .push("The value for this measurement is 3.")
@@ -1003,7 +1013,13 @@ deal more than size ever did.";
         // "Hello, how can I help?" must not arrive as a lone "Hello," and a pause. A two-word
         // fragment costs a whole utterance of startup and trailing silence to say nearly nothing,
         // and is heard as a stutter.
-        for chunk in phrases("Hello, how can I help you with that today, Arya?") {
+        //
+        // The floor is on cuts, not on the reply: whatever is left when generation ends is
+        // spoken however short it is, which is why the last piece is exempt.
+        let spoken = phrases(
+            "Hello, how can I help you with that today, Arya? There is a good deal to get              through, and I would rather take it in order than jump about. Tell me where you              would like to begin, and we can work forward from there together at your pace.",
+        );
+        for chunk in spoken.iter().take(spoken.len() - 1) {
             assert!(
                 chunk.split_whitespace().count() >= ChunkLimits::default().minimum,
                 "fragment reached synthesis: {chunk:?}"
@@ -1463,7 +1479,7 @@ knowing his place under the sun.";
     fn a_speaker_who_never_punctuates_is_still_cut_at_the_hard_limit() {
         let mut chunker = ReplyChunker::new(ChunkLimits::default());
         let mut emitted = None;
-        for _ in 0..80 {
+        for _ in 0..ChunkLimits::default().first_hard + 10 {
             if let Some(chunk) = chunker.push("word ") {
                 emitted = Some(chunk);
                 break;
@@ -1479,7 +1495,7 @@ knowing his place under the sun.";
     fn a_cut_never_lands_mid_word() {
         let mut chunker = ReplyChunker::new(ChunkLimits::default());
         let mut chunk = None;
-        for _ in 0..80 {
+        for _ in 0..ChunkLimits::default().first_hard + 10 {
             if let Some(emitted) = chunker.push("alpha ") {
                 chunk = Some(emitted);
                 break;

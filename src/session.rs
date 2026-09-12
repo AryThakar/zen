@@ -492,8 +492,10 @@ mod tests {
                 }
             })
             .collect();
-        assert!(phrases.len() > 5, "got {} phrases", phrases.len());
-        assert!(phrases.iter().all(|p| p.split_whitespace().count() <= 60));
+        assert!(phrases.len() > 3, "got {} phrases", phrases.len());
+        assert!(phrases
+            .iter()
+            .all(|p| p.split_whitespace().count() <= ChunkLimits::default().hard));
         assert_eq!(
             phrases.join(" ").split_whitespace().collect::<Vec<_>>(),
             text.split_whitespace().collect::<Vec<_>>()

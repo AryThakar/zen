@@ -19,8 +19,12 @@ fn session() -> Session {
 /// A first stretch long enough to cross the chunker's opening gate, so it is handed to
 /// synthesis while generation is still running. Short replies are deliberately held and
 /// spoken whole, which is a different path and not the one these tests are about.
+// Long enough to open the first-chunk gate, which now sits above an ordinary reply so that
+// most replies are spoken whole rather than assembled out of separately synthesised pieces.
 const LONG_FIRST: &str = "There is a lion out on the ridge at dusk and the whole herd below \
-him has gone completely still, which is the part people never quite expect to hear about. ";
+him has gone completely still, which is the part people never quite expect to hear about. They \
+do not scatter and they do not run, because running is what gets noticed, and the one thing \
+none of them wants tonight is to be the animal that moved first. ";
 const TAIL: &str = "He does not need to move at all. ";
 
 fn speak_tasks(tasks: Vec<Task>) -> Vec<String> {
