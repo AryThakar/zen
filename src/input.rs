@@ -20,6 +20,11 @@ impl Utterance {
         };
     }
 
+    /// Audio accepted into this utterance so far, in milliseconds.
+    pub fn audio_ms(&self) -> usize {
+        self.audio_ms
+    }
+
     pub fn generation(&self) -> Option<Generation> {
         self.generation
     }

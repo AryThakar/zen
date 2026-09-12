@@ -87,6 +87,19 @@ fn greeting_line() -> String {
     "Hello. What's on your mind?".to_string()
 }
 
+/// How long recognition may take for the audio just captured.
+///
+/// Recognition costs roughly 450 ms plus 240 ms per second of speech, so a fixed budget is
+/// really a cap on how long anyone may talk: say four sentences and the turn is thrown away
+/// for being slow, having already been heard. Sized from the audio instead, generously - this
+/// is a guard against a stuck recogniser, not a performance target.
+fn transcribe_budget_ms(audio_ms: usize) -> u64 {
+    const FIXED_MS: u64 = 3_000;
+    const PER_SECOND_MS: u64 = 400;
+    let budget = FIXED_MS + (audio_ms as u64) * PER_SECOND_MS / 1_000;
+    budget.clamp(5_000, 45_000)
+}
+
 pub(crate) async fn run(
     options: &EngineOptions,
     prompt: &str,
@@ -172,6 +185,7 @@ async fn run_owned(
         last_capture: Instant::now(),
         last_state: None,
         last_endpoint: None,
+        transcribe_deadline: None,
         pending_speech: VecDeque::new(),
     };
     let mut connection = transport.status();
@@ -223,6 +237,7 @@ async fn run_owned(
             {
                 runner.fail("audio_stalled");
             }
+            runner.enforce_transcribe_deadline();
             if !runner.audio.is_empty() && runner.last_progress.elapsed() > Duration::from_secs(15)
             {
                 runner.fail("playback_stalled");
@@ -287,6 +302,9 @@ struct RemoteRunner {
     last_state: Option<(&'static str, u64)>,
     /// Last endpoint reported to the page, so a learned change is sent once.
     last_endpoint: Option<usize>,
+    /// When the words captured so far must be answered, whether or not recognition has
+    /// finished with all of them.
+    transcribe_deadline: Option<u64>,
     pending_speech: VecDeque<(Generation, String)>,
 }
 
@@ -343,6 +361,33 @@ impl RemoteRunner {
         self.dispatch(tasks);
         self.capture.reset_capture();
     }
+    /// Recognition has run past its budget. Answer from the words it did produce.
+    ///
+    /// Discarding the turn is the one response that cannot be right: the speaker said their
+    /// piece, and telling them to say it again spends their time to save the machine's. A
+    /// partial transcript is an imperfect answer to the right question, which is better.
+    fn enforce_transcribe_deadline(&mut self) {
+        let Some(deadline) = self.transcribe_deadline else {
+            return;
+        };
+        if self.now() < deadline {
+            return;
+        }
+        self.transcribe_deadline = None;
+        let partial = self.input.preview();
+        // Nothing was recognised at all, so there is nothing to answer with. The turn machine's
+        // own backstop reports that as a failure, which is the honest outcome.
+        if partial.trim().is_empty() {
+            return;
+        }
+        let Some(generation) = self.input.generation() else {
+            return;
+        };
+        self.input.cancel();
+        let tasks = self.session.on_transcript(generation, partial, self.now());
+        self.dispatch(tasks);
+    }
+
     fn dispatch(&mut self, tasks: Vec<Task>) {
         let mut tasks: VecDeque<_> = tasks.into();
         while let Some(task) = tasks.pop_front() {
@@ -461,6 +506,8 @@ impl RemoteRunner {
             }
             CaptureEvent::Ended => {
                 self.input.close();
+                self.transcribe_deadline =
+                    Some(self.now() + transcribe_budget_ms(self.input.audio_ms()));
                 let tasks = self.session.on_turn_ended(self.now());
                 self.dispatch(tasks);
                 self.finalize();
@@ -470,6 +517,7 @@ impl RemoteRunner {
     }
     fn finalize(&mut self) {
         if let Some((g, text)) = self.input.take_ready() {
+            self.transcribe_deadline = None;
             let tasks = self.session.on_transcript(g, text, self.now());
             self.dispatch(tasks);
         }
@@ -496,6 +544,8 @@ impl RemoteRunner {
                 self.dispatch(tasks);
                 let tasks = self.session.on_speech(self.now());
                 self.dispatch(tasks);
+                self.transcribe_deadline =
+                    Some(self.now() + transcribe_budget_ms(self.input.audio_ms()));
                 let tasks = self.session.on_turn_ended(self.now());
                 self.dispatch(tasks);
                 let tasks = self
@@ -706,5 +756,22 @@ impl RemoteRunner {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transcribe_budget_ms;
+
+    #[test]
+    fn the_recognition_budget_follows_the_audio() {
+        // Short turns get the floor, long ones get room, and nothing gets forever.
+        assert_eq!(transcribe_budget_ms(0), 5_000);
+        assert_eq!(transcribe_budget_ms(2_000), 5_000);
+        assert_eq!(transcribe_budget_ms(30_000), 15_000);
+        assert_eq!(transcribe_budget_ms(180_000), 45_000);
+        // The flat ten seconds this replaced: recognising a forty-second turn costs about ten,
+        // which is exactly where a turn used to be thrown away for being slow.
+        assert!(transcribe_budget_ms(40_000) > 10_000);
     }
 }

@@ -97,6 +97,12 @@ pub struct TurnTimeouts {
     /// Silence in [`Phase::Listening`] before giving up on an utterance.
     pub listening_ms: u64,
     /// How long speech-to-text may take before the turn is abandoned.
+    ///
+    /// A backstop, not the working deadline. Recognition costs roughly 450 ms plus 240 ms per
+    /// second of speech, so a single number here is really a limit on how long anyone may
+    /// talk. The host applies a deadline sized from the audio actually captured, and answers
+    /// from the words recognised so far rather than discarding the turn; this only catches
+    /// the case where nothing was recognised at all.
     pub transcribe_ms: u64,
     /// How long the model may take before the turn is abandoned.
     pub thinking_ms: u64,
@@ -108,7 +114,7 @@ impl Default for TurnTimeouts {
     fn default() -> Self {
         Self {
             listening_ms: 15_000,
-            transcribe_ms: 10_000,
+            transcribe_ms: 60_000,
             thinking_ms: 30_000,
             speaking_ms: 120_000,
         }
@@ -404,8 +410,14 @@ mod tests {
         let mut machine = machine();
         machine.handle(Event::SpeechStarted, 0);
         machine.handle(Event::SegmentReady, 100);
-        assert!(machine.poll(5_000).is_empty());
-        machine.poll(10_100);
+        // This is the backstop for a recogniser that returned nothing at all. The working
+        // deadline is the host's, sized from the audio captured, and it answers from a partial
+        // transcript rather than discarding what was said.
+        assert!(
+            machine.poll(30_000).is_empty(),
+            "a long turn is not a stall"
+        );
+        machine.poll(60_100);
         assert_eq!(machine.phase(), Phase::Listening);
         assert_eq!(machine.timeouts_hit(), 1);
     }

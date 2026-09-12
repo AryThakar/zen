@@ -288,6 +288,12 @@ pub struct SegmenterConfig {
     pub minimum_frames: usize,
     /// Hard cut, so a monologue is handed to the transcriber in pieces rather than all at once.
     pub maximum_frames: usize,
+    /// Hard end of a turn, however much speech is still arriving.
+    ///
+    /// A turn this long is not a person finishing a thought - it is a television, a call on
+    /// speakerphone, or a microphone left open. Without it the turn grows until some other
+    /// limit trips and the speaker is told to start again, having said everything already.
+    pub max_turn_frames: usize,
 }
 
 impl SegmenterConfig {
@@ -316,6 +322,7 @@ impl Default for SegmenterConfig {
             resume_window_frames: Self::frames_for_ms(1_000), // ~1 s
             minimum_frames: Self::frames_for_ms(300), // ~300 ms
             maximum_frames: Self::frames_for_ms(20_000), // 20 s
+            max_turn_frames: Self::frames_for_ms(30_000), // 30 s
         }
     }
 }
@@ -380,6 +387,8 @@ pub struct Segmenter {
     /// Frames of silence since the last turn ended, while none is open. A speaker who resumes
     /// after only a few of these was not finished, and the endpoint that cut them was short.
     since_turn_end: Option<usize>,
+    /// Frames of the turn currently open, counted across the pieces it was cut into.
+    turn_frames: usize,
     open: bool,
 }
 
@@ -395,6 +404,7 @@ impl Segmenter {
             silence_run: 0,
             longest_pause: 0,
             since_turn_end: None,
+            turn_frames: 0,
             open: false,
         }
     }
@@ -455,6 +465,7 @@ impl Segmenter {
     }
 
     fn push_open(&mut self, frame: Vec<f32>, probability: f32) -> SegmentOutcome {
+        self.turn_frames += 1;
         self.active.push(frame);
         self.active_probabilities.push(probability);
 
@@ -471,6 +482,16 @@ impl Segmenter {
         // The turn is over. Everything still buffered goes out with it.
         if self.silence_run >= self.config.endpoint.frames() {
             let chunk = self.close(SegmentEnd::Silence);
+            return SegmentOutcome {
+                chunk,
+                turn_ended: true,
+            };
+        }
+
+        // Nobody has stopped talking for long enough to end this, and it has gone on past any
+        // human turn. Answer what was heard rather than listening forever.
+        if self.turn_frames >= self.config.max_turn_frames {
+            let chunk = self.close(SegmentEnd::MaximumLength);
             return SegmentOutcome {
                 chunk,
                 turn_ended: true,
@@ -547,6 +568,7 @@ impl Segmenter {
         let mut probabilities = std::mem::take(&mut self.active_probabilities);
         self.open = false;
         self.speech_run = 0;
+        self.turn_frames = 0;
         let trailing = self.silence_run;
         self.silence_run = 0;
         if end == SegmentEnd::Silence {
@@ -1140,6 +1162,7 @@ mod tests {
             postroll_frames: 1,
             minimum_frames: 3,
             maximum_frames: 50,
+            max_turn_frames: 900,
         }
     }
 
@@ -1528,6 +1551,33 @@ mod tests {
             unreachable!()
         };
         assert_eq!(segmenter.config.endpoint.frames(), floor_frames);
+    }
+
+    #[test]
+    fn a_turn_that_never_pauses_still_ends() {
+        // A television, a speakerphone, a microphone left open: speech that never stops is not
+        // a person finishing a thought. Waiting for a pause that is not coming leaves every
+        // word already said unanswered, which is the worst of both.
+        let mut segmenter = Segmenter::new(config());
+        let cap = segmenter.config.max_turn_frames;
+        let mut ended_at = None;
+        for frames in 1..=cap + 10 {
+            if segmenter.push_turn(frame(), 0.9).turn_ended {
+                ended_at = Some(frames);
+                break;
+            }
+        }
+        let ended_at = ended_at.expect("a turn with no pause in it must still end");
+        // The turn opens a frame or two after speech starts, so the cap lands just past it.
+        assert!(
+            (cap..=cap + 5).contains(&ended_at),
+            "ended after {ended_at} frames, cap is {cap}"
+        );
+        // And not so early that a long but ordinary answer is cut in half.
+        assert!(
+            ended_at * 36 > 25_000,
+            "a turn must survive at least 25 seconds"
+        );
     }
 
     #[test]
