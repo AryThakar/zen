@@ -1,3 +1,4 @@
+import { createVoicePolish } from "./polish.mjs";
 // Audio and device identifiers are held only for the lifetime of a connection.
 export class AudioPlayback {
   // The codec's first block can be only 80 ms, with the next arriving 125 ms later.
@@ -12,6 +13,10 @@ export class AudioPlayback {
     this.onPhrase = onPhrase;
     this.analyser = context.createAnalyser();
     this.analyser.fftSize = 256;
+    // Reply audio passes through the polish chain before it is heard, and the meter reads the
+    // processed signal, so the orb moves with what actually reaches the speaker.
+    this.polish = createVoicePolish(context);
+    this.polish.output.connect(this.analyser);
     this.analyser.connect(context.destination);
     this.meter = new Float32Array(256);
     this.sources = new Set();
@@ -95,7 +100,7 @@ export class AudioPlayback {
     const source = this.context.createBufferSource(),
       gain = this.context.createGain();
     source.buffer = buffer;
-    source.connect(gain).connect(this.analyser);
+    source.connect(gain).connect(this.polish.input);
     const now = this.context.currentTime;
     // Buffer only at startup or after a real underrun. Rebuffering while even a few
     // milliseconds remain inserts silence into an otherwise contiguous waveform.
@@ -235,6 +240,9 @@ export class AudioPlayback {
     clearInterval(this.timer);
     this.clear();
     this.analyser.disconnect();
+    for (const node of this.polish.nodes) node.disconnect();
+    this.polish.input.disconnect();
+    this.polish.output.disconnect();
   }
 }
 

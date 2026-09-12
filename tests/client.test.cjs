@@ -95,7 +95,13 @@ function audioGraph() {
     currentTime: 0,
     deviceTime: 0,
     state: "running",
+    sampleRate: 48000,
     destination: {},
+    // The playback chain builds real filters; these are the nodes it asks for.
+    createBiquadFilter: () => ({ ...node(), type: "peaking", frequency: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {} }, gain: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {} }, Q: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {} } }),
+    createWaveShaper: () => ({ ...node(), curve: null, oversample: "none" }),
+    createConvolver: () => ({ ...node(), buffer: null }),
+    createDynamicsCompressor: () => ({ ...node(), threshold: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {} }, knee: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {} }, ratio: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {} }, attack: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {} }, release: { value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, cancelScheduledValues() {} } }),
     createAnalyser: () => ({
       ...node(),
       getFloatTimeDomainData(data) {
