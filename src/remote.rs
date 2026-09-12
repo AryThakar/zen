@@ -388,6 +388,28 @@ impl RemoteRunner {
         self.dispatch(tasks);
     }
 
+    /// Rebuild the model server's cached prefix while the speaker is still talking.
+    ///
+    /// When the window evicts, the prefix the server had cached no longer matches, and the
+    /// next reply pays to re-read the whole conversation - measured at 2.4 s for a full
+    /// window, which lands as a silence after the speaker stops. The prompt it will need is
+    /// already known the moment eviction happens, and the graphics card is idle while someone
+    /// is speaking, so the cost is paid there instead, where nobody is waiting for it.
+    fn prewarm_prefix(&mut self) {
+        if !self.session.take_prefix_invalidated() || self.model.is_some() {
+            return;
+        }
+        let messages = self.session.conversation().messages();
+        let llama = self.llama.clone();
+        tokio::spawn(async move {
+            // One token, discarded. What matters is the prefill it leaves behind.
+            let _ = llama
+                .client()
+                .stream_completion_with(SlotKind::Talker, &messages, 1, 0.1, |_| false)
+                .await;
+        });
+    }
+
     fn dispatch(&mut self, tasks: Vec<Task>) {
         let mut tasks: VecDeque<_> = tasks.into();
         while let Some(task) = tasks.pop_front() {
@@ -490,6 +512,7 @@ impl RemoteRunner {
     fn capture_event(&mut self, event: CaptureEvent) -> Result<(), Error> {
         match event {
             CaptureEvent::Started => {
+                self.prewarm_prefix();
                 let tasks = self.session.on_speech(self.now());
                 self.dispatch(tasks);
                 self.input.begin(self.session.generation());

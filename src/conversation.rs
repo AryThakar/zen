@@ -200,6 +200,8 @@ pub struct Conversation {
     turns: VecDeque<Utterance>,
     budget: WindowBudget,
     evictions: usize,
+    /// The server cached a prefix that no longer matches this conversation.
+    prefix_dead: bool,
 }
 
 impl Conversation {
@@ -209,6 +211,7 @@ impl Conversation {
             turns: VecDeque::new(),
             budget,
             evictions: 0,
+            prefix_dead: false,
         }
     }
 
@@ -217,6 +220,7 @@ impl Conversation {
     /// change without unloading the model, which is the difference between starting
     /// fresh instantly and waiting for five gigabytes to load again.
     pub fn set_system(&mut self, system: impl Into<String>) {
+        self.prefix_dead = true;
         self.system = system.into();
     }
 
@@ -224,6 +228,7 @@ impl Conversation {
     /// window being emptied, not the session ending: the model stays loaded, so
     /// starting fresh costs nothing but the history itself.
     pub fn clear_history(&mut self) {
+        self.prefix_dead = true;
         self.turns.clear();
         self.evictions = 0;
     }
@@ -298,6 +303,15 @@ impl Conversation {
                 .sum::<usize>()
     }
 
+    /// Whether the model server's cached prefix is stale, clearing the flag.
+    ///
+    /// Set by anything that changes the prompt other than appending to it: eviction, new
+    /// instructions, a cleared history. Kept here rather than at the call sites because a
+    /// question and a reply are recorded by different paths, and either can evict.
+    pub fn take_prefix_invalidated(&mut self) -> bool {
+        std::mem::take(&mut self.prefix_dead)
+    }
+
     fn enforce_budget(&mut self) -> WindowChange {
         if self.estimated_tokens() <= self.budget.prompt_limit() {
             return WindowChange::default();
@@ -326,6 +340,7 @@ impl Conversation {
         }
         if evicted > 0 {
             self.evictions += 1;
+            self.prefix_dead = true;
         }
         WindowChange {
             evicted_turns: evicted,

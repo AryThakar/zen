@@ -340,6 +340,15 @@ impl Session {
         self.conversation.record_reply(reply, interrupted);
     }
 
+    /// Whether the cached prefix is dead, clearing the flag.
+    ///
+    /// Eviction is decided by the history that already exists, not by what is about to be
+    /// said, so the re-read it forces can be done while the speaker is still talking rather
+    /// than in the silence after they stop.
+    pub fn take_prefix_invalidated(&mut self) -> bool {
+        self.conversation.take_prefix_invalidated()
+    }
+
     pub fn on_failure(&mut self, generation: Generation, reason: String, now_ms: u64) -> Vec<Task> {
         if !self.is_current(generation) {
             return Vec::new();
@@ -684,6 +693,42 @@ mod tests {
         let tasks = session.poll(60_100);
         assert!(tasks.iter().any(|task| matches!(task, Task::Cancel { .. })));
         assert!(!session.is_current(stale));
+    }
+
+    #[test]
+    fn eviction_is_announced_once_so_the_prefix_can_be_rebuilt_early() {
+        // The host rebuilds the server's cached prefix while the next speaker is talking. It
+        // needs to know eviction happened, and needs to be told exactly once.
+        let mut session = Session::new(
+            Conversation::new("You are Zen.", WindowBudget::for_slot(2_048)),
+            TurnTimeouts::default(),
+            ChunkLimits::default(),
+        );
+        assert!(
+            !session.take_prefix_invalidated(),
+            "nothing has been said yet"
+        );
+        for turn in 0..40 {
+            let (generation, _) = to_speaking(&mut session, turn * 1_000);
+            // What was heard is what is recorded, so the window fills from the spoken text.
+            session.on_spoken(
+                generation,
+                "A reply long enough that forty of them cannot fit in a window this small, which is the whole point: the oldest turns have to go."
+                    .repeat(3),
+            );
+            session.on_playback_finished(generation, turn * 1_000 + 600);
+        }
+        assert!(
+            session.take_prefix_invalidated(),
+            "forty turns into a small window, something must have been evicted: {} tokens, {} evictions, limit {}",
+            session.conversation().estimated_tokens(),
+            session.conversation().evictions(),
+            WindowBudget::for_slot(2_048).prompt_limit()
+        );
+        assert!(
+            !session.take_prefix_invalidated(),
+            "the flag must clear when taken"
+        );
     }
 
     #[test]
