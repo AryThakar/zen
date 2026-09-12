@@ -1,6 +1,6 @@
 # Building the native libraries
 
-[docs/SETUP.md](SETUP.md) tells you where each native file goes and which prebuilt download to
+[SETUP.md](SETUP.md) tells you where each native file goes and which prebuilt download to
 take. This page is for when a prebuilt does not exist for you: a different GPU vendor, a
 different operating system, recognition on the GPU rather than the processor, or simply a
 llama.cpp newer than the release this was pinned to.
