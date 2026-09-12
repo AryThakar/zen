@@ -244,6 +244,7 @@ impl Session {
         {
             return Vec::new();
         }
+        self.reply.generated(text);
         let mut tasks = Vec::new();
         let mut chunk = self.chunker.push(text);
         while let Some(ready) = chunk {
@@ -700,7 +701,8 @@ mod tests {
         // The host rebuilds the server's cached prefix while the next speaker is talking. It
         // needs to know eviction happened, and needs to be told exactly once.
         let mut session = Session::new(
-            Conversation::new("You are Zen.", WindowBudget::for_slot(2_048)),
+            // A window small enough that forty ordinary turns cannot fit in it.
+            Conversation::new("You are Zen.", WindowBudget::for_slot(1_024)),
             TurnTimeouts::default(),
             ChunkLimits::default(),
         );
@@ -713,8 +715,7 @@ mod tests {
             // What was heard is what is recorded, so the window fills from the spoken text.
             session.on_spoken(
                 generation,
-                "A reply long enough that forty of them cannot fit in a window this small, which is the whole point: the oldest turns have to go."
-                    .repeat(3),
+                "Hello there and how can I help you today?".into(),
             );
             session.on_playback_finished(generation, turn * 1_000 + 600);
         }

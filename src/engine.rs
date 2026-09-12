@@ -662,6 +662,22 @@ impl LlamaClient {
                 "conversation exceeds text limit".into(),
             ));
         }
+        // Rendering and tokenising the whole conversation costs two round trips to the server,
+        // and both grow with it: the tokenizer answers with a JSON array holding every token id.
+        // Measured in a live session, that became most of the wait before a reply started -
+        // about a second at forty turns, still climbing. The exact count only decides anything
+        // near the limit, so estimate first, deliberately high, and pay for certainty only when
+        // the estimate says it might matter.
+        const CHARS_PER_TOKEN: usize = 3;
+        const PER_MESSAGE_TEMPLATE_TOKENS: usize = 8;
+        let estimate: usize = fitted
+            .iter()
+            .map(|(_, text)| text.len() / CHARS_PER_TOKEN + PER_MESSAGE_TEMPLATE_TOKENS)
+            .sum();
+        if estimate < limit * 3 / 4 {
+            return Ok(fitted);
+        }
+
         loop {
             let wire: Vec<_> = fitted
                 .iter()
@@ -1262,9 +1278,12 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let client = LlamaClient::new(&config).unwrap();
+        // Long enough that the cheap estimate cannot rule the limit out, so the exact count
+        // runs. Short conversations deliberately skip both round trips.
+        let bulky = format!("OLDER {}", "a lot of words to say ".repeat(1_200));
         let messages = vec![
             ("system", "instructions".into()),
-            ("user", "OLDER".into()),
+            ("user", bulky),
             ("assistant", "old answer".into()),
             ("user", "latest".into()),
         ];
@@ -1275,12 +1294,27 @@ mod tests {
         );
         assert!(client
             .fit_messages(
-                &[("system", "TOO_LARGE".into()), ("user", "latest".into())],
+                &[
+                    (
+                        "system",
+                        format!("TOO_LARGE {}", "and more words ".repeat(2_000))
+                    ),
+                    ("user", "latest".into())
+                ],
                 1024
             )
             .await
             .is_err());
+
+        // And the shortcut itself: an ordinary conversation is fitted without asking the
+        // server anything, which is why this client can answer with the server torn down.
         task.abort();
+        let ordinary = vec![("system", "instructions".into()), ("user", "latest".into())];
+        assert_eq!(
+            client.fit_messages(&ordinary, 1024).await.unwrap(),
+            ordinary,
+            "a short conversation must not need the server to be fitted"
+        );
     }
 
     #[test]
@@ -1322,15 +1356,19 @@ mod tests {
         let mut config = config();
         config.port = listener.local_addr().unwrap().port();
         let server = tokio::spawn(async move {
-            for (path, mime, body) in [
-                ("/apply-template", "application/json", r#"{"prompt":"hi"}"#),
-                ("/tokenize", "application/json", r#"{"tokens":[1,2]}"#),
-                ("/v1/chat/completions", "text/event-stream", "data: {\"choices\":[{\"delta\":{\"content\":\"Hello.\"}}]}\n\ndata: [DONE]\n\n"),
-            ] {
+            // A short conversation is well under the limit, so it goes straight to the model:
+            // no template rendering and no tokenising, which is the point of the estimate.
+            for (path, mime, body) in [(
+                "/v1/chat/completions",
+                "text/event-stream",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hello.\"}}]}\n\ndata: [DONE]\n\n",
+            )] {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = vec![0; 16384];
                 let n = socket.read(&mut request).await.unwrap();
-                assert!(String::from_utf8_lossy(&request[..n]).starts_with(&format!("POST {path} ")));
+                assert!(
+                    String::from_utf8_lossy(&request[..n]).starts_with(&format!("POST {path} "))
+                );
                 socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
             }
         });

@@ -88,6 +88,9 @@ impl Utterance {
 #[derive(Debug, Clone, Default)]
 pub struct SpokenReply {
     chunks: Vec<String>,
+    /// The model's own words for the phrases handed to synthesis, before they were rewritten
+    /// for the ear.
+    generated: String,
 }
 
 impl SpokenReply {
@@ -105,6 +108,17 @@ impl SpokenReply {
         if !chunk.trim().is_empty() {
             self.chunks.push(chunk);
         }
+    }
+
+    /// Records the model's own text as it arrives, before any of it is made speakable.
+    ///
+    /// A completed reply is stored in the conversation exactly as the model wrote it. The
+    /// spoken form differs - dashes become commas, numbers become words - and storing that
+    /// instead hands the model tokens it never produced, which costs the server its cached
+    /// prefix and makes it re-read the whole conversation on every single turn. Measured on a
+    /// short history that was 858 tokens re-processed instead of 16.
+    pub fn generated(&mut self, text: &str) {
+        self.generated.push_str(text);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -129,9 +143,17 @@ impl SpokenReply {
 
     /// Seals the reply into a turn.
     pub fn finish(self, interrupted: bool) -> Utterance {
+        // Interrupted, only what was actually heard can be claimed - and the model has to see
+        // where it was cut off. Complete, the two say the same thing, so the model's own
+        // wording is stored because it is the one the server has already cached.
+        let text = if interrupted || self.generated.trim().is_empty() {
+            self.spoken_text()
+        } else {
+            self.generated.trim().to_string()
+        };
         Utterance {
             speaker: Speaker::Assistant,
-            text: self.spoken_text(),
+            text,
             interrupted,
         }
     }
