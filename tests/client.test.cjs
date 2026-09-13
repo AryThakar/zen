@@ -213,8 +213,8 @@ test("a chunk arriving before playback runs out stays contiguous even with littl
       const previousEnd = sources[0].at + sources[0].buffer.duration;
       audio.currentTime = previousEnd - headroom;
       player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: new Uint8Array(12000) });
-      assert.equal(sources[1].at, headroom > 0.006 ? previousEnd - 0.006 : previousEnd,
-        "an on-time chunk must not insert silence");
+      assert.equal(sources[1].at, previousEnd,
+        "an on-time chunk must neither insert silence nor overlap what came before");
     } finally { player.dispose(); }
   }
 });
@@ -244,61 +244,55 @@ test("the measured short first codec block tolerates a 20 ms delivery delay", as
       player.queue({ generation: 3, phrase: 1, sequence: index + 1, pcm: new Uint8Array(samples * 2) });
     }
     for (let i = 1; i < sources.length; i++)
-      assert.equal(sources[i].at, sources[i - 1].at + sources[i - 1].buffer.duration - 0.006,
+      assert.equal(sources[i].at, sources[i - 1].at + sources[i - 1].buffer.duration,
         "short initial codec chunks need enough startup headroom for IPC jitter");
   } finally { player.dispose(); }
 });
 
-test("codec blocks overlap briefly at their seam instead of clicking", async () => {
-  // The blocks are not one continuous waveform: tts.rs asks the codec for 0.25 s chunks with
-  // 80 ms of left context and voice.rs splits on exactly that boundary, so every join is a
-  // codec join. Measured over a synthesised passage most of them are clean, but the worst step
-  // at a boundary ran to six times the movement either side of it, and that one is a tick.
+test("codec blocks of one phrase are joined at the sample, never overlapped", async () => {
+  // A crossfade used to sit here to cover codec seams. A few seams really are discontinuous,
+  // but only three of twenty-five in a rendered passage, and overlapping all of them to cover
+  // those three costs six milliseconds of speech per join and smears every one. Rendered both
+  // ways through the same audio graph, joining is indistinguishable from the same audio played
+  // as a single buffer and any crossfade is not.
   const { player, audio, sources } = await playback();
   try {
     player.begin({ generation: 3, phrase: 1, text: "A smooth sentence." });
-    player.queue({ generation: 3, phrase: 1, sequence: 1, pcm: new Uint8Array(12000) });
-    audio.currentTime = 0.15;
-    const previousEnd = sources[0].at + sources[0].buffer.duration;
-    player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: new Uint8Array(12000) });
+    let played = 0;
+    for (let sequence = 1; sequence <= 6; sequence++) {
+      player.queue({ generation: 3, phrase: 1, sequence, pcm: new Uint8Array(12000) });
+      audio.currentTime = 0.15 * sequence;
+      played += sources[sequence - 1].buffer.duration;
+    }
+    for (let i = 1; i < sources.length; i++)
+      assert.equal(
+        sources[i].at,
+        sources[i - 1].at + sources[i - 1].buffer.duration,
+        "block " + i + " must start exactly where the one before it ends",
+      );
+    const last = sources[sources.length - 1];
     assert.equal(
-      sources[1].at,
-      previousEnd - 0.006,
-      "adjacent codec blocks should receive a short equal-power overlap",
+      Number((last.at + last.buffer.duration - sources[0].at).toFixed(6)),
+      Number(played.toFixed(6)),
+      "the phrase must occupy exactly as long as the audio in it, losing nothing to overlaps",
     );
   } finally { player.dispose(); }
 });
 
-test("the seam crossfade holds power, not amplitude", async () => {
-  // The two sides of a codec seam are different audio, so their powers add and not their
-  // amplitudes. Ramping both linearly keeps the gains summing to one while the level falls
-  // away underneath: measured over a synthesised passage that is a 2.00 dB dip at every seam,
-  // four times a second, heard as roughness rather than as any one click.
-  const { AudioPlayback } = await import("../src/client/audio.mjs");
-  for (let i = 0; i < AudioPlayback.SEAM_IN.length; i++) {
-    const power = AudioPlayback.SEAM_IN[i] ** 2 + AudioPlayback.SEAM_OUT[i] ** 2;
-    assert.ok(
-      Math.abs(power - 1) < 1e-6,
-      `point ${i} sums to ${power}, which is a hole in the level`,
-    );
-  }
-  assert.equal(AudioPlayback.SEAM_IN[0], 0, "the arriving block starts silent");
-  assert.equal(AudioPlayback.SEAM_OUT[AudioPlayback.SEAM_OUT.length - 1], 0, "the leaving block ends silent");
-});
-
-test("adjacent codec blocks are crossfaded with that curve, not a straight ramp", async () => {
+test("a joined block plays at full gain, with no ramp to smear it", async () => {
   const { player, audio, gains } = await playback();
   try {
     player.begin({ generation: 3, phrase: 1, text: "A smooth sentence." });
     player.queue({ generation: 3, phrase: 1, sequence: 1, pcm: new Uint8Array(12000) });
     audio.currentTime = 0.15;
     player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: new Uint8Array(12000) });
-    const arriving = gains.at(-1).gain.ramps.filter((r) => r.kind === "curve");
-    assert.equal(arriving.length, 1, "the arriving block is faded in with a curve");
-    assert.ok(
-      Math.abs(arriving[0].power - 0.5) < 0.01,
-      `half way through the crossfade each side should carry half the power, got ${arriving[0].power}`,
+    const arriving = gains.at(-1).gain.ramps;
+    assert.deepEqual(
+      arriving.map((r) => r.kind),
+      ["set"],
+      "a contiguous block needs one gain set and nothing else: " + JSON.stringify(arriving),
     );
+    assert.equal(arriving[0].value, 1, "and it plays at full gain from its first sample");
   } finally { player.dispose(); }
 });
 

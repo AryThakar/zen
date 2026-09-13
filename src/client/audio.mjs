@@ -3,33 +3,6 @@ export class AudioPlayback {
   // The codec's first block can be only 80 ms, with the next arriving 125 ms later.
   // Cover that initial deficit plus a few IPC/render ticks before starting the device.
   static STARTUP_BUFFER = 0.1;
-  /// A short equal-power overlap across the seam between codec blocks.
-  ///
-  /// The blocks are not one continuous waveform. `tts.rs` asks the codec for 0.25 s chunks with
-  /// 80 ms of left context, and `voice.rs` hands them on split at exactly that 0.25 s, so every
-  /// block boundary is a codec boundary. Measured across a synthesised passage, most of those
-  /// join cleanly, but a few do not: the worst sample-to-sample step at a boundary ran to six
-  /// times the movement either side of it, and that one is heard as a tick. The overlap costs
-  /// six milliseconds of timeline per join, which is the price of not hearing them.
-  static SEAM_FADE = 0.006;
-  /// The shape of that overlap, and it has to be equal power.
-  ///
-  /// The two sides of a codec seam are different audio, not two copies of the same waveform, so
-  /// their powers add rather than their amplitudes. Ramping both linearly holds the sum of the
-  /// gains at one and lets the level fall away underneath it: measured over a synthesised
-  /// passage, 65 seams inside speech dipped 2.00 dB on average and 6.70 dB at worst, four times
-  /// a second, which is heard as a metallic roughness rather than as any one click. Square-root
-  /// curves hold the power instead of the amplitude, and the same seams dip 0.38 dB.
-  static SEAM_IN = AudioPlayback.curve((t) => Math.sqrt(t));
-  static SEAM_OUT = AudioPlayback.curve((t) => Math.sqrt(1 - t));
-
-  static curve(shape) {
-    const points = new Float32Array(64);
-    for (let i = 0; i < points.length; i++) {
-      points[i] = shape(i / (points.length - 1));
-    }
-    return points;
-  }
   /// The rate synthesis produces.
   static RATE = 24000;
   /// Ramped off the end of a phrase. Synthesis stops when it runs out of text, sometimes with
@@ -140,29 +113,24 @@ export class AudioPlayback {
     // milliseconds remain inserts silence into an otherwise contiguous waveform.
     if (phrase.started && this.next < now)
       this.jitter = Math.min(0.16, this.jitter + 0.015);
-    const blend =
-      phrase.started &&
-      this.lastPhrase === event.phrase &&
-      this.next > now + AudioPlayback.SEAM_FADE;
-    const at = blend
-      ? this.next - AudioPlayback.SEAM_FADE
+    // Blocks of one phrase meet at the sample, so they are joined and not crossfaded.
+    //
+    // A crossfade was here to hide codec seams, and a few are genuinely discontinuous - the
+    // worst measured six times the sample-to-sample movement either side of it. But only three
+    // of twenty-five seams in a rendered passage were like that, and overlapping all
+    // twenty-five to cover those three costs six milliseconds of speech at every join and
+    // smears each one. Rendered both ways through the same audio graph and compared against
+    // the identical audio played as a single buffer, joining is indistinguishable from the
+    // single buffer and any crossfade is not.
+    const contiguous =
+      phrase.started && this.lastPhrase === event.phrase && this.next > now;
+    const at = contiguous
+      ? this.next
       : Math.max(now + (this.next > now ? 0 : this.jitter), this.next);
     const end = at + buffer.duration;
     this.next = end;
-    if (blend && this.lastItem) {
-      const fadeStart = at;
-      const fadeEnd = at + AudioPlayback.SEAM_FADE;
-      this.lastItem.gain.gain.cancelScheduledValues(fadeStart);
-      this.lastItem.gain.gain.setValueCurveAtTime(
-        AudioPlayback.SEAM_OUT,
-        fadeStart,
-        AudioPlayback.SEAM_FADE,
-      );
-      gain.gain.setValueCurveAtTime(
-        AudioPlayback.SEAM_IN,
-        fadeStart,
-        AudioPlayback.SEAM_FADE,
-      );
+    if (contiguous) {
+      gain.gain.setValueAtTime(1, at);
     } else {
       if (!phrase.started) {
         phrase.started = true;
