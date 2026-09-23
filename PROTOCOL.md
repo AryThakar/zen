@@ -152,8 +152,10 @@ Session error: `backend_unavailable`. Turn errors: `invalid_input`, `recognition
 session error ends the session. Instructions that break the limits are refused where they
 arrive: `zen_attach` rejects its call, and `clear_history` fails as `invalid_input`.
 
-`recognition_incomplete` means recognition timed out or could not accept all captured audio.
-The partial hypothesis is not committed as a complete question. Transcript repair failures
+`recognition_incomplete` means recognition did not finish within its deadline. The partial
+hypothesis is not committed as a complete question. Audio the recogniser cannot take - it has
+fallen behind, or the question has outgrown one turn - is not an error: the turn ends there
+and is answered from what was heard. Transcript repair failures
 fall back to the complete raw transcript only when their generation and input revision match.
 Resuming speech while repair runs retains the earlier recognized prefix of that utterance.
 

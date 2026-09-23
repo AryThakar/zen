@@ -128,8 +128,9 @@ Measured on the reference machine, the LLM uses 1.6 GB of VRAM and decodes at 81
   are recognised while the speaker is still talking, so what is left when they stop is the
   last piece, not the whole question. Speaking while that finishes continues the same question
   instead of starting a new one - nothing has been said back yet, so there is nothing to
-  interrupt. A question that outgrows one turn (three minutes, or more pieces than the
-  recogniser can queue) is reported as incomplete rather than answered in part.
+  interrupt. If the recogniser falls behind, or a question outgrows one turn (three minutes),
+  the turn ends there and is answered from what was heard, rather than failing and losing
+  every word already recognised.
 
 ### The end-of-turn pause is measured, not configured
 

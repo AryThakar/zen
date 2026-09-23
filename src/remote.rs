@@ -827,8 +827,9 @@ impl RemoteRunner {
     fn capture_event(&mut self, event: CaptureEvent) -> Result<(), Error> {
         match event {
             CaptureEvent::Started => {
+                // The question already holds all one turn can, and is being recognised. It is
+                // answered as it stands; what is said over it now cannot join it.
                 if self.session.phase() == Phase::Transcribing && self.input.is_full() {
-                    self.fail("recognition_incomplete");
                     return Ok(());
                 }
                 // If recognition of the previous utterance is still outstanding, the session
@@ -864,7 +865,11 @@ impl RemoteRunner {
                     Err(_) => false,
                 };
                 if !accepted {
-                    self.fail("recognition_incomplete");
+                    // Recognition is behind, or the turn has outgrown what one utterance holds.
+                    // Neither is worth what reporting it as an error costs: the turn, including
+                    // every word already recognised. End it here instead and answer from the
+                    // pieces that were accepted.
+                    self.end_turn();
                 }
             }
             CaptureEvent::Ended => self.end_turn(),
