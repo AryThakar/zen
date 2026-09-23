@@ -45,7 +45,6 @@ test("a delayed microphone permission grant cannot revive a cancelled session", 
         throw new Error("Cancelled capture sent audio");
       },
       onLevel() {},
-      onOnset() {},
       onState() {},
       onError() {},
     };
@@ -110,7 +109,6 @@ test("an interrupted worklet download can be retried", async () => {
     const mic = new Microphone(context, {
       onFrame() {},
       onLevel() {},
-      onOnset() {},
       onState() {},
       onError() {},
     });

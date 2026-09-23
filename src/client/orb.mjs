@@ -168,9 +168,13 @@ export class LiquidOrb {
   /// `levels` reports the two voices separately. They are deliberately not merged:
   /// the orb should look different when it is listening to you and when it is
   /// talking back.
-  constructor(canvas, levels = () => ({ input: 0, output: 0 })) {
+  ///
+  /// `onFrame`, if given, hears each drawn frame's smoothed levels - your voice, then Zen's - and
+  /// the seconds since the last, for anything around the orb that should move with it.
+  constructor(canvas, levels = () => ({ input: 0, output: 0 }), onFrame = null) {
     this.canvas = canvas;
     this.levels = levels;
+    this.onFrame = onFrame;
     this.phase = "idle";
     this.energy = 0;
     this.voice = 0;
@@ -441,6 +445,7 @@ export class LiquidOrb {
     gl.uniformMatrix3fv(u.spin, false, this.spin);
     gl.uniform1f(u.press, still ? 0 : this.press);
     gl.drawElements(gl.TRIANGLES, this.count, gl.UNSIGNED_SHORT, 0);
+    this.onFrame?.(this.listen, this.voice, dt);
   }
 
   dispose() {

@@ -11,7 +11,7 @@ use crate::{
     bridge::{validate_prompt, EngineOptions},
     engine::{LlamaConfig, LlamaEngine, SlotKind},
     resample::StreamResampler,
-    tts::Synthesizer,
+    tts::{Synthesizer, TTS_SAMPLE_RATE},
 };
 use std::{
     path::{Path, PathBuf},
@@ -29,14 +29,10 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 /// beside the binary, and so the string is byte-identical every run, which is what lets
 /// llama-server reuse its cached prompt instead of reprocessing it.
 const PERSONA: &str = crate::bridge::DEFAULT_PERSONA;
-/// The same instruction the running engine gives the filter slot, so the self-test measures
-/// the shipped prompt rather than a copy of it that drifted.
-const FILTER: &str = include_str!("prompts/filter.txt");
 
 #[derive(Debug)]
 struct Options {
     root: PathBuf,
-    endpoint_ms: Option<usize>,
     filter: bool,
     self_test: bool,
     run_for: Option<Duration>,
@@ -49,36 +45,43 @@ struct Options {
 ///
 /// Found relative to the executable so the whole install can be copied or moved and still
 /// start from a double click. `zen.exe` beside those directories is the shipped layout; the
-/// walk upwards is what lets a freshly built `target/release/zen.exe` run in place.
-fn discover_root() -> PathBuf {
-    const FALLBACK: &str = r"C:\zen-ai";
+/// walk upwards is what lets a freshly built `target/release/zen.exe` run in place - and the
+/// measurement tools in `examples/` find the models the same way.
+pub fn discover_root() -> PathBuf {
     if let Some(root) = std::env::var_os("ZEN_ROOT") {
         return PathBuf::from(root);
     }
-    let complete = |dir: &Path| {
+    let exe = std::env::current_exe().ok();
+    root_near(exe.as_deref().and_then(Path::parent), |dir| {
         ["bin", "lib", "model"]
             .iter()
             .all(|name| dir.join(name).is_dir())
-    };
-    if let Ok(exe) = std::env::current_exe() {
-        let mut dir = exe.parent();
-        // Six levels covers `target/<profile>/` and a deps directory with room to spare.
-        for _ in 0..6 {
-            let Some(candidate) = dir else { break };
-            if complete(candidate) {
-                return candidate.to_path_buf();
-            }
-            dir = candidate.parent();
+    })
+}
+
+/// The first directory at or above `start` that holds a complete install.
+///
+/// With none, `start` itself. What is missing is then reported inside the folder Zen was run
+/// from, which is where anyone would go to fix it. This used to fall back to the folder on the
+/// machine Zen was developed on, so an install anywhere else failed with paths its owner had
+/// never seen.
+fn root_near(start: Option<&Path>, complete: impl Fn(&Path) -> bool) -> PathBuf {
+    let mut dir = start;
+    // Six levels covers `target/<profile>/` and a deps directory with room to spare.
+    for _ in 0..6 {
+        let Some(candidate) = dir else { break };
+        if complete(candidate) {
+            return candidate.to_path_buf();
         }
+        dir = candidate.parent();
     }
-    PathBuf::from(FALLBACK)
+    start.map_or_else(|| PathBuf::from("."), Path::to_path_buf)
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             root: discover_root(),
-            endpoint_ms: None,
             filter: true,
             self_test: false,
             run_for: None,
@@ -94,12 +97,6 @@ impl From<Options> for EngineOptions {
         Self {
             root: o.root,
             system_prompt: crate::bridge::compose_prompt(&o.system_prompt),
-            endpoint: match o.endpoint_ms {
-                Some(ms) => crate::audio::EndpointPolicy::Fixed(
-                    crate::audio::SegmenterConfig::frames_for_ms(ms),
-                ),
-                None => crate::audio::EndpointPolicy::adaptive(),
-            },
             reply_tokens: o.reply_tokens,
             filter: o.filter,
             gain: o.gain,
@@ -122,15 +119,14 @@ const USAGE: &str = r"Zen local voice assistant
                                  (found next to the executable by default)
   --system-prompt TEXT           Replace the persona. The voice rules are kept
   --system-prompt-file PATH      Read instructions from a UTF-8 file
-  --endpoint-ms N                Fix the end-of-utterance pause, 450..2000 ms.
-                                 Omitted, Zen learns it from how you pause
   --reply-tokens N               Reply budget, 64..1024 (default 512)
-  --gain N                       Output gain, 0.5..4.0 (default 1.8)
+  --gain N                       Output gain, 0.5..4.0 (default 2.0)
   --no-filter                    Skip transcript repair
   --run-for-seconds N            Stop after N seconds
 
-Instructions can also be set in the window before the first session. Command-line
-prompts may be retained by your shell; the window keeps them only in memory.
+Instructions can also be set in Settings, which keeps them on this computer and uses them
+from the next conversation. A prompt given on the command line may stay in your shell's
+history.
 ";
 
 fn parse(args: impl Iterator<Item = String>) -> Result<Option<Options>, String> {
@@ -181,17 +177,6 @@ fn parse(args: impl Iterator<Item = String>) -> Result<Option<Options>, String> 
                 o.reply_tokens = n;
             }
             "--root" => o.root = PathBuf::from(args.next().ok_or("--root needs a path")?),
-            "--endpoint-ms" => {
-                let ms: usize = args
-                    .next()
-                    .ok_or("missing endpoint")?
-                    .parse()
-                    .map_err(|_| "invalid endpoint")?;
-                if !(450..=2000).contains(&ms) {
-                    return Err("endpoint must be 450..2000 ms".into());
-                }
-                o.endpoint_ms = Some(ms);
-            }
             "--run-for-seconds" => {
                 let n = args
                     .next()
@@ -358,7 +343,8 @@ async fn self_test(
             if let Some(previous) = previous_chunk.replace(arrived) {
                 max_chunk_gap = max_chunk_gap.max(arrived - previous);
             }
-            let delivered = Duration::from_secs_f64(audio.len() as f64 / 24000.0);
+            let delivered =
+                Duration::from_secs_f64(audio.len() as f64 / f64::from(TTS_SAMPLE_RATE));
             required_buffer =
                 required_buffer.max((arrived - first_arrival).saturating_sub(delivered));
             audio.extend_from_slice(chunk);
@@ -371,7 +357,7 @@ async fn self_test(
     println!(
         "TTS: first chunk {} ms, {:.2} s audio, {:.2} s wall",
         first.unwrap().as_millis(),
-        audio.len() as f64 / 24000.0,
+        audio.len() as f64 / f64::from(TTS_SAMPLE_RATE),
         start.elapsed().as_secs_f64()
     );
     println!(
@@ -379,7 +365,7 @@ async fn self_test(
         max_chunk_gap.as_millis(),
         required_buffer.as_millis()
     );
-    let mut converter = StreamResampler::new(24000, 16000)?;
+    let mut converter = StreamResampler::new(TTS_SAMPLE_RATE, crate::audio::SAMPLE_RATE)?;
     let mut capture = Vec::new();
     converter.push(&audio, &mut capture)?;
     converter.finish(&mut capture)?;
@@ -512,50 +498,30 @@ async fn self_test(
     }
     println!("Talker listed every month, {} characters", listed.len());
 
-    // The filter slot, on the shipped instruction and through the same parser the session
-    // uses. Its two failure modes are silent from anywhere else: it answers the question
-    // instead of copying it down, or it declares a perfectly clear sentence unintelligible
-    // and the speaker is asked to repeat something they said correctly. Neither shows up in
-    // an offline test, because neither is a property of the code - both are properties of
-    // this model reading this prompt.
-    for (transcript, expected) in [
-        ("wut is the wether tooday", FilterExpectation::CleanLike(&["weather"])),
-        (
-            "can you turn on the kitchen lights",
-            FilterExpectation::CleanLike(&["kitchen", "light"]),
-        ),
-        ("uh um uh", FilterExpectation::Ask),
+    // The filter slot, on the shipped instruction and through the same parser and guard the
+    // session uses. Its failure mode is silent from anywhere else: it answers the question, or
+    // loses part of it, instead of copying it down. That does not show up in an offline test,
+    // because it is not a property of the code but of this model reading this prompt. (A
+    // transcript with nothing in it - "uh um uh" - ends the turn before the filter is asked.)
+    for (transcript, words) in [
+        ("wut is the wether tooday", &["weather"][..]),
+        ("can you turn on the kitchen lights", &["kitchen", "light"][..]),
         // Longer than the flat 128-token budget the filter used to be given. Past that the
         // `CLEAN:` line ran out partway through and the rest of the question was simply
         // gone - accepted downstream, because every word still in it had genuinely been
         // said. The last words are what this checks, since truncation only ever loses those.
         (
             "so i was going through the notes from the meeting yesterday and there were a couple of things i wanted to check with you about the schedule for next month because the room booking looked like it might overlap with the other team and i could not tell from the calendar whether that had been sorted out already or whether somebody still needs to call the front desk about it before friday",
-            FilterExpectation::CleanLike(&["front desk", "friday"]),
+            &["front desk", "friday"][..],
         ),
     ] {
         let verdict = filter_once(llama, transcript).await?;
-        let accepted = crate::reply::accept_verdict(transcript, verdict);
-        match (&expected, &accepted) {
-            (FilterExpectation::CleanLike(words), crate::reply::FilterVerdict::Clean(text)) => {
-                let lowered = text.to_lowercase();
-                if let Some(missing) = words.iter().find(|word| !lowered.contains(**word)) {
-                    return Err(format!(
-                        "the filter lost {missing:?} out of {transcript:?}: {text}"
-                    )
-                    .into());
-                }
-                println!("Filter: {transcript:?} -> {text}");
-            }
-            (FilterExpectation::Ask, crate::reply::FilterVerdict::Ask(question)) => {
-                println!("Filter: {transcript:?} -> asked for a repeat: {question}");
-            }
-            (_, accepted) => {
-                return Err(
-                    format!("the filter mishandled {transcript:?}: {accepted:?}").into()
-                )
-            }
+        let text = crate::reply::accept_verdict(transcript, verdict);
+        let lowered = text.to_lowercase();
+        if let Some(missing) = words.iter().find(|word| !lowered.contains(**word)) {
+            return Err(format!("the filter lost {missing:?} out of {transcript:?}: {text}").into());
         }
+        println!("Filter: {transcript:?} -> {text}");
     }
 
     let cancelled = AtomicBool::new(false);
@@ -611,22 +577,13 @@ async fn talker_reply(
         .to_string())
 }
 
-/// What one transcript should come back as.
-enum FilterExpectation {
-    /// A repair that kept these words. Not an exact string: the filter is a language model
-    /// and the punctuation it chooses is its own business.
-    CleanLike(&'static [&'static str]),
-    /// Nothing was said. The only case where asking for a repeat is the right answer.
-    Ask,
-}
-
 /// One filter request, exactly as a live turn makes it.
 async fn filter_once(
     llama: &LlamaEngine,
     transcript: &str,
 ) -> Result<crate::reply::FilterVerdict, Box<dyn std::error::Error + Send + Sync>> {
     let messages = vec![
-        ("system", FILTER.to_string()),
+        ("system", crate::bridge::FILTER_RULES.to_string()),
         (
             "user",
             serde_json::json!({ "transcript": transcript }).to_string(),
@@ -672,12 +629,21 @@ mod tests {
 
     #[test]
     fn bounded_options_hold_their_ranges() {
-        assert!(options(&["--endpoint-ms", "449"]).is_err());
-        assert!(options(&["--endpoint-ms", "2001"]).is_err());
-        assert!(options(&["--endpoint-ms", "720"]).is_ok());
+        // The pause is learned, never set by hand.
+        assert!(options(&["--endpoint-ms", "720"]).is_err());
         assert!(options(&["--reply-tokens", "63"]).is_err());
         assert!(options(&["--reply-tokens", "1025"]).is_err());
         assert!(options(&["--run-for-seconds", "0"]).is_err());
+    }
+
+    #[test]
+    fn the_install_is_found_above_the_executable_or_reported_where_it_is() {
+        let exe_dir = Path::new(r"D:\Apps\Zen\target\release");
+        let found = root_near(Some(exe_dir), |dir| dir == Path::new(r"D:\Apps\Zen"));
+        assert_eq!(found, Path::new(r"D:\Apps\Zen"));
+        // Nothing complete anywhere: the folder Zen is in, never one from another machine.
+        assert_eq!(root_near(Some(exe_dir), |_| false), exe_dir);
+        assert_eq!(root_near(None, |_| false), Path::new("."));
     }
 
     #[test]

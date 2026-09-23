@@ -82,3 +82,36 @@ test('hung IPC times out and a control-only backlog has a hard bound', async () 
   assert.equal(full.queue.length, 0);
   assert.equal(errors.length, 2);
 });
+
+test('a playback acknowledgement does not wait behind a second of captured speech', async () => {
+  // The loop this exists to break. The engine stops sending audio at about two seconds
+  // unacknowledged, so an acknowledgement stuck behind fifty queued capture frames starves the
+  // player of the audio it is about to need. Nothing about an acknowledgement is sequenced
+  // against speech - it describes the output stream - so it goes first.
+  const { OrderedInput, PRIORITY_CONTROLS } = await import('../src/client/transport.mjs');
+  assert.ok(PRIORITY_CONTROLS.has('audio_played'), 'playback progress must be a priority control');
+  const order = [];
+  let release;
+  const input = new OrderedInput(async (_, frame) => {
+    order.push(frame[8] === 0 ? 'capture' : JSON.parse(new TextDecoder().decode(frame.slice(9))).type);
+    if (order.length === 1) await new Promise(resolve => { release = resolve; });
+  }, 5, error => { throw error; });
+  const control = (type, priority) =>
+    input.send(1, new TextEncoder().encode(JSON.stringify({ type })), priority);
+
+  input.send(0, Uint8Array.of(1));                 // in flight, holding the pump
+  for (let i = 0; i < 40; i++) input.send(0, Uint8Array.of(i));
+  control('end_audio', PRIORITY_CONTROLS.has('end_audio'));
+  control('audio_played', PRIORITY_CONTROLS.has('audio_played'));
+  release();
+  await tick();
+
+  const ack = order.indexOf('audio_played');
+  const ended = order.indexOf('end_audio');
+  assert.equal(order[1], 'audio_played',
+    'the acknowledgement must be sent as soon as the pump is free: ' + order.slice(0, 3));
+  assert.ok(ack < ended, 'and ahead of the capture backlog, not behind it');
+  assert.equal(ended, order.length - 1,
+    'while end_audio stays behind the speech it marks the end of');
+  input.close();
+});

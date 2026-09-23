@@ -7,7 +7,7 @@
 **A private voice assistant that runs entirely on your own PC.**
 
 Speech recognition, a language model and streaming speech synthesis, all local, behind one
-desktop window. Nothing you say, hear or type leaves the machine or is written to disk.
+desktop window. Nothing you say, hear or type to Zen leaves the machine or is written to disk.
 
 [![CI](https://github.com/AryThakar/zen/actions/workflows/ci.yml/badge.svg)](https://github.com/AryThakar/zen/actions/workflows/ci.yml)
 ![Platform: Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4)
@@ -16,7 +16,7 @@ desktop window. Nothing you say, hear or type leaves the machine or is written t
 ![GPU: 4 GB VRAM](https://img.shields.io/badge/GPU-4%20GB%20VRAM-76B900)
 ![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-orange)
 
-<img src="docs/screenshots/speaking-light.png" width="860" alt="Zen speaking a reply: the glass orb deforms with the reply audio and the caption shows the phrase being spoken" />
+<img src="docs/screenshots/speaking-light.png" width="860" alt="Zen speaking a reply: the glass orb deforms with the reply audio and the reply board shows the words as they are said" />
 
 <sub>Screenshots are of the running app. Every reply shown was generated and spoken live by the local models.</sub>
 
@@ -45,21 +45,24 @@ executable.
 
 - **Private by construction.** No cloud APIs, account or telemetry. The model server is bound
   to loopback (enforced in code), the speech workers use authenticated loopback sockets, and
-  audio, transcripts and prompts are never written to disk.
-- **Natural turn-taking.** Talk over Zen and he stops: confirmed speech, not just a loud noise,
+  audio, transcripts and replies are never written to disk.
+- **Natural turn-taking.** Talk over Zen and it stops: confirmed speech, not just a loud noise,
   ends the reply, and history keeps only the words you actually heard, so the model never
-  believes it told you something you missed. Speaking while he is still working out what you
+  believes it told you something you missed. Speaking while it is still working out what you
   said is treated as the rest of the same question rather than an interruption, so a long
-  question is never cut in half by its own second sentence.
+  question is never cut in half by its own second sentence. A long question is recognised in
+  pieces while you are still saying it, so the answer does not wait for all of it to be heard
+  again once you stop.
 - **An end-of-turn pause that learns you.** A fixed silence threshold always cuts somebody off.
   Zen notices when you carry on straight after being cut off, waits longer next time, and
   relaxes again over clean turns, within 0.6–2.0 s.
 - **Transcript repair before answering.** A dedicated model slot fixes misrecognised words and
   translates non-English speech into English. A guard rejects "corrections" that invent words
   you never said, and a repair that runs out of budget falls back to the raw transcript.
-- **Streaming speech.** Replies start playing about 0.6 s after synthesis begins. A jitter
-  buffer, equal-power seam crossfades and an envelope-following limiter keep playback clean.
-  An ordinary reply is synthesised in one piece rather than split, because every split is a
+- **Streaming speech.** Replies start playing about 0.6 s after synthesis begins. The start of
+  each reply is held just long enough for delivery to stay ahead of it, the buffer deepens only
+  when delivery proves it must, and a true-peak limiter in the engine keeps playback clean. An
+  ordinary reply is synthesised in one piece rather than split, because every split is a
   separate call to the synthesiser that restarts the contour and resets the emphasis; the
   window before Zen speaks is a little longer for it.
 - **Fits a 4 GB laptop GPU.** One `llama-server` with two fixed slots, a stateless filter and a
@@ -68,8 +71,14 @@ executable.
 - **Hard to wedge.** ASR and TTS run in separate processes so their GGML builds cannot collide,
   and a crash there fails one turn rather than the app. A Windows job object kills every child
   process if Zen dies, so a crash never leaves the GPU memory and port held.
-- **A calm interface.** Light and night themes, reduced-motion support, live captions, and a
-  WebGL glass orb that deforms with the reply audio and swells with your voice.
+- **A calm interface.** Zen opens on its moon: the crescent rises to a peal of bells, then
+  glides aside as its name comes into focus (a click or a key skips it). Then a slowly drifting
+  night sky (a pearl one in the light theme), frosted glass, reduced-motion support, a reply
+  board that follows Zen's words as it says them, and a WebGL glass orb that deforms with the
+  reply audio and swells with your voice. A soft aurora around the
+  orb says what Zen is doing in colour - aqua while it listens, lavender while it thinks, rose
+  while it speaks - and a quiet moonlit one breathes around it while it sleeps, ready the
+  moment you come back.
 
 ## Performance
 
@@ -86,7 +95,7 @@ Intel Core i5-12450H and 16 GB RAM, Windows 11.
 | TTS speed | 2.96 s of speech in 1.46 s | `zen.exe --self-test` |
 | TTS cancellation | acknowledged in 5 ms | `zen.exe --self-test` |
 | ASR, 2.9 s utterance | 1.64 s | `zen.exe --self-test` |
-| Typed message to Zen speaking, warm session | ~1.5 s (1482 ms, 1575 ms) | scripted session in the real window |
+| Typed message to Zen speaking, warm session | 0.87–1.81 s over six questions, median 1.46 s | scripted session in the real window, 19 September 2026 |
 
 The first turn after launch also loads the models, which took about 14 s on this machine.
 
@@ -96,7 +105,7 @@ The first turn after launch also loads the models, which took about 14 s on this
 flowchart TB
     subgraph W["Window (WebView2)"]
         MIC["Microphone<br/>echo cancel, noise, gain"] --> WL["AudioWorklet<br/>20 ms PCM at 16 kHz"]
-        PB["Playback scheduler<br/>jitter buffer, limiter"]
+        PB["Playback worklet<br/>jitter buffer"]
     end
     subgraph E["Rust engine (same process)"]
         VAD["Silero VAD<br/>+ segmenter"] --> ASR["Qwen3-ASR<br/>worker process"]
@@ -106,7 +115,7 @@ flowchart TB
         CH --> TTS["Qwen3-TTS<br/>worker process"]
     end
     WL -->|"ordered IPC"| VAD
-    TTS -->|"24 kHz PCM"| PB
+    TTS -->|"24 kHz PCM, true-peak limited"| PB
     PB -->|"playback acks"| CH
 ```
 
@@ -126,11 +135,11 @@ acknowledgements drive backpressure and decide what enters the conversation hist
 
 ## Screenshots
 
-| Ready to talk | Night theme, speaking |
+| Ready to talk | Dark theme, speaking |
 | --- | --- |
-| <img src="docs/screenshots/home-light.png" alt="Zen home screen before a session: the orb, Start talking button and a text box" /> | <img src="docs/screenshots/speaking-dark.png" alt="Zen in the night theme while speaking a reply" /> |
+| <img src="docs/screenshots/home-light.png" alt="Zen home screen before a session: the orb, Start talking button and a text box" /> | <img src="docs/screenshots/speaking-dark.png" alt="Zen in the dark theme while speaking a reply, the sentence already said stepped back on the board" /> |
 | **Conversation history** | **Settings** |
-| <img src="docs/screenshots/conversation.png" alt="The conversation panel listing two exchanges between the user and Zen" /> | <img src="docs/screenshots/settings.png" alt="Settings: conversation instructions, theme and listening pause" /> |
+| <img src="docs/screenshots/conversation.png" alt="The conversation panel: a question in a bubble and Zen's answer set as speech" /> | <img src="docs/screenshots/settings.png" alt="Settings: instructions, starting a new conversation, theme and listening" /> |
 
 ## Requirements
 
@@ -186,9 +195,9 @@ than Windows — see [docs/BUILDING_NATIVE.md](docs/BUILDING_NATIVE.md).
 ### 3. Run
 
 Put `Zen.exe` in the root and double-click it — the downloaded one, or `target\release\zen.exe`
-renamed if you built it. There is no installer, service or first-run setup. Zen finds the root beside the executable or in any
-parent directory, so a clone inside the root also runs in place. Otherwise pass `--root PATH`
-or set `ZEN_ROOT`.
+renamed if you built it. There is no installer, service or first-run setup. Zen finds the root
+beside the executable or in any parent directory, so a clone inside the root also runs in
+place. Otherwise pass `--root PATH` or set `ZEN_ROOT`.
 
 Check the installation from a terminal first:
 
@@ -204,15 +213,34 @@ conversation memory, both prompts and cancellation. A healthy install ends with
 
 - **Talk.** Press **Start talking**, allow the microphone, and speak normally. Pause when you
   are done; Zen answers out loud. Speak over it to interrupt.
-- **Type.** Write in the box under the controls. Typing interrupts whatever Zen is doing.
-- **Stop, sound cues, history.** The stop button ends the current reply, the speaker toggles
-  the soft interface sounds, and the speech bubble opens the conversation so far.
-- **Settings.** Per-conversation instructions, light or night theme, the listening pause
-  (automatic, or set it yourself), and microphone and speaker selection.
-- **Closing the window keeps Zen running** in the tray with the models loaded. Quit from the
-  tray icon. Launching Zen again brings the existing window forward instead of starting a
-  second engine.
-- **End session** (the power button) releases the models and all conversation state.
+- **Type.** Write in the box under the controls; Enter sends and Shift+Enter starts a new line.
+  Typing interrupts whatever Zen is doing. On a fresh page, the starters at the foot of the
+  window ("Plan my morning", "Help me unwind", ...) send themselves as if typed.
+- **The reply board, mute, Stop, history.** Zen's reply goes up on the board a sentence at a
+  time as it is said. A reply starts at the top, and when the words being said reach the last
+  line the board glides up to keep them in view, like a prompter; scroll up to reread and it
+  stays put. What you said stays there while Zen thinks. The speaker on the board mutes Zen,
+  its voice and its chimes, for this launch: the reply carries on, on the board and in the
+  conversation. Stop ends the current reply and appears only while there is one, and
+  Conversation opens what has been said so far. A reply cut off part-way keeps the sentences
+  you certainly heard, ends in a dash, and Zen carries on from there.
+- **Quiet.** After two minutes with nobody talking and Zen saying nothing, the microphone
+  turns itself off, as if you had muted it, and Zen goes to sleep: the orb keeps its light
+  and a soft moonlit glow breathes around it. Start talking, typing or a starter wakes it.
+  Choose "Never" in Settings to keep the microphone on.
+- **Settings.** Instructions, light or dark theme and the quiet setting are kept
+  between launches; clear the instructions or choose System to go back to the defaults. Also
+  there: the listening pause Zen has learned, where the wait before the last answer went, and
+  microphone and speaker selection. Windows names your devices only once the microphone has
+  been on, so until then the pickers say so. The microphone switches as soon as you choose it;
+  if it is unplugged, or Windows moves its default (earbuds connected), Zen follows and says so.
+- **Closing the window keeps Zen running** in the tray with the models loaded. Launching Zen
+  again brings the existing window forward instead of starting a second engine.
+- **End session** (the power button) releases the models and all conversation state; Zen
+  itself stays open.
+- **Quit Zen** (in Settings, or the tray icon) stops the app completely: the window, the tray
+  icon, the models and every process Zen started, so nothing is left running in the
+  background.
 
 The system prompt is two compiled-in files, joined in that order:
 
@@ -220,7 +248,7 @@ The system prompt is two compiled-in files, joined in that order:
   speakable rather than readable: no lists or markdown, numbers as words, and that a request
   outranks brevity, so Zen never cuts an answer short for being long to say.
 - [`src/prompts/talker.txt`](src/prompts/talker.txt) — the persona, and **the only part
-  replaced** by `--system-prompt` or **Conversation instructions** in Settings. Custom
+  replaced** by `--system-prompt` or **Instructions** in Settings. Custom
   instructions cannot drop the voice rules, because every path that sets them goes through the
   same composition.
 
@@ -229,9 +257,12 @@ that it cannot set timers, browse or control devices rather than pretending to. 
 its user by name (the author's), and [`src/prompts/filter.txt`](src/prompts/filter.txt)
 expects that name when repairing transcripts. Change the name in both files for your own build.
 
-A session opens with a spoken greeting chosen from the local clock. It is not recorded in the
-conversation — nothing was asked and the model did not say it — and you can talk over it like
-anything else.
+A session opens with a greeting in Zen's own words, written by the model from the day and the
+time of day, so it is not the same sentence every time; if the model is slow, a fixed line
+stands in. It is not recorded in the conversation — nothing was asked. Zen does not listen while
+it plays: the browser's echo canceller is still learning Zen's voice then, and let part of the
+greeting through as if you had said it. A short chime marks the end of it; talk after that.
+Typing or the stop button cuts the greeting short.
 
 ### Command-line options
 
@@ -240,24 +271,30 @@ anything else.
 | `--root PATH` | Installation root holding `bin`, `lib` and `model`; found beside the executable by default |
 | `--system-prompt TEXT` | Replace the persona, up to 8192 UTF-8 bytes. The voice rules are kept |
 | `--system-prompt-file PATH` | Read the instructions from a UTF-8 file |
-| `--endpoint-ms N` | Fix the end-of-turn pause, 450–2000 ms. Omitted, Zen learns it from how you pause |
 | `--reply-tokens N` | Reply budget, 64–1024 (default 512), also reserved in the context budget |
-| `--gain N` | Output gain, 0.5–4.0 (default 1.8), soft-limited |
+| `--gain N` | Output gain, 0.5–4.0 (default 2.0), true-peak limited |
 | `--no-filter` | Skip transcript repair |
 | `--run-for-seconds N` | Quit after N seconds |
 | `--self-test` | Exercise native ASR, LLM, repair, TTS and cancellation without a window |
 
 Your shell may keep command-line prompts in its history. Instructions typed into Settings are
-held only in memory.
+kept by the window on this computer, like the theme, until you clear them.
 
 ## Privacy
 
 - No network access beyond the local machine, and no account.
 - Nothing said, heard or typed is written to disk. Native library output goes to the null
-  device, and llama-server's disk KV cache is disabled.
+  device, and llama-server's disk KV cache is disabled. llama-server's own output is read only
+  while it starts, to explain a failed launch, and discarded from then on.
+- The one exception is opt-in, for diagnosis: with `ZEN_UNHEARD_AUDIO_DIR` set to a folder,
+  any stretch of clear speech that recognition returned no words for is saved there as a
+  16 kHz WAV. Unset, nothing is written.
+- While Zen sleeps the microphone is off, so nothing is heard at all until you wake it.
 - The window keeps the last forty displayed messages in memory. Ending the session or quitting
   clears them, along with the model KV caches.
-- The theme and the listening pause are the only things remembered between launches.
+- Between launches the window remembers only your settings - the instructions, the theme, the
+  quiet setting - and the listening pause Zen has learned. Nothing said, heard or typed to Zen
+  is among them.
 
 This is an application policy, not secure erasure of OS swap, crash dumps or backups made by
 other tools. See [SECURITY.md](SECURITY.md) for what Zen exposes.
@@ -267,7 +304,7 @@ other tools. See [SECURITY.md](SECURITY.md) for what Zen exposes.
 ```powershell
 cargo fmt --all -- --check
 cargo clippy --release --locked --all-targets -- -D warnings
-cargo test --release --locked --all-targets     # 236 tests, no models needed
+cargo test --release --locked --all-targets     # 305 tests, no models needed
 npm ci
 npm test                                        # interface unit tests
 npm run test:ui                                 # interface in headless Microsoft Edge
@@ -303,15 +340,17 @@ src/
 ├── engine.rs           llama-server supervision, slots and streaming client
 ├── native.rs, job.rs   isolated worker processes and the job object
 ├── prompts/            voice rules, persona and filter instructions, compiled in
-└── client/             interface, microphone worklet, playback scheduler, orb shader
+└── client/             interface, capture and playback worklets, reply board, orb shader
 tests/                  Rust flow tests and Node interface tests
+examples/               measurement tools behind the numbers in these docs; not part of the app
 ```
 
 ## Limitations
 
 - Windows and NVIDIA only. The native libraries are Windows CUDA builds, and process
   containment uses Windows job objects.
-- The models and native libraries are installed by hand; no packaged release is published.
+- The models and native libraries are installed by hand; no installer that bundles them is
+  published.
   `tauri.conf.json` is configured for an NSIS installer, but the tested distribution is the
   single executable.
 - Replies are always in English, and Zen has no tools: it cannot browse, set timers or control
@@ -328,7 +367,8 @@ Zen stands on [llama.cpp](https://github.com/ggml-org/llama.cpp),
 [Unsloth](https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF)), the Qwen team's Qwen3-ASR
 and Qwen3-TTS, [Silero VAD](https://github.com/snakers4/silero-vad),
 [Tauri](https://tauri.app/), [`ort`](https://github.com/pykeio/ort) and the
-[Inter](https://rsms.me/inter/) typeface. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[Inter](https://rsms.me/inter/) and [Newsreader](https://github.com/productiontype/Newsreader)
+typefaces. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 

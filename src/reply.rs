@@ -7,8 +7,10 @@
 //! 1. **Filter protocol** - reading the filter slot's verdict on a raw transcript, and refusing
 //!    to accept a "correction" that invented words the speaker never said.
 //! 2. **Speakable text** - turning a reply into something a synthesiser reads aloud correctly.
-//! 3. **Output chunking** - cutting a token stream into phrases, with the first one short so
-//!    audio starts quickly.
+//! 3. **Output chunking** - cutting a token stream into phrases, at a finished sentence wherever
+//!    one is available, because each phrase is a separate call to the synthesiser.
+
+use crate::tts::SLOWEST_MS_PER_CHAR;
 
 // ============================================================================================
 // Filter slot protocol
@@ -19,12 +21,11 @@
 pub enum FilterVerdict {
     /// Usable. Carries the cleaned transcript.
     Clean(String),
-    /// Not usable. Carries the filter's own words asking for a repeat.
+    /// Not usable, in the filter's judgement. Carries its own words asking for a repeat.
     ///
-    /// Written by the model rather than pulled from a fixed list, so it can refer to what it did
-    /// hear ("did you say the kitchen light, or the kitchen fan?"). A canned "sorry, say that
-    /// again" gives the speaker nothing to correct and they usually just repeat themselves
-    /// identically.
+    /// Parsed so it is never mistaken for a transcript, and never said: a transcript with nothing
+    /// in it ends the turn before the filter sees it, so every request to repeat that comes back
+    /// is about words that were said, and [`accept_verdict`] answers them instead.
     Ask(String),
 }
 
@@ -118,13 +119,17 @@ fn spelling_similarity(a: &str, b: &str) -> f32 {
 /// within half of anything else ("me" against "mm", "a" against "uh"), so allowing it there would
 /// let an invented sentence ground itself on coincidence.
 fn is_grounded(word: &str, raw_words: &[String]) -> bool {
+    raw_words.iter().any(|raw| same_word(word, raw))
+}
+
+/// Whether two normalised words are the same word, allowing for how it was heard. See
+/// [`resembles_original`].
+fn same_word(word: &str, other: &str) -> bool {
     const MIN_FUZZY_LENGTH: usize = 3;
     const MIN_SIMILARITY: f32 = 0.5;
-    raw_words.iter().any(|raw| {
-        raw == word
-            || (word.chars().count() >= MIN_FUZZY_LENGTH
-                && spelling_similarity(word, raw) >= MIN_SIMILARITY)
-    })
+    word == other
+        || (word.chars().count() >= MIN_FUZZY_LENGTH
+            && spelling_similarity(word, other) >= MIN_SIMILARITY)
 }
 
 /// Whether a cleaned transcript is plausibly the same utterance as the raw one.
@@ -139,8 +144,9 @@ fn is_grounded(word: &str, raw_words: &[String]) -> bool {
 /// garbled text instead. Every word the filter fixed counted against it, so the guard fired
 /// hardest on exactly the transcripts that needed repair most.
 ///
-/// Measured as the share of cleaned words grounded in the raw transcript by [`is_grounded`].
-/// Repairs keep each word recognisable; invention replaces them with unrelated ones.
+/// Measured as the share of cleaned words grounded in the raw transcript: the same word, or one
+/// close enough in spelling to be a mishearing of it. Repairs keep each word recognisable;
+/// invention replaces them with unrelated ones.
 pub fn resembles_original(raw: &str, cleaned: &str) -> bool {
     let raw_words: Vec<String> = normalise_words(raw);
     let cleaned_words: Vec<String> = normalise_words(cleaned);
@@ -240,22 +246,22 @@ fn normalise_words(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Applies the verdict, falling back to the raw transcript when the filter overreached.
-/// Words that carry nothing on their own. A transcript of only these is worth asking about.
+/// Words that carry nothing on their own. A transcript of only these was said to nobody.
 const FILLER: [&str; 12] = [
     "uh", "um", "umm", "uhh", "er", "erm", "ah", "eh", "hm", "hmm", "mm", "mhm",
 ];
 
-/// Whether the speaker said anything worth answering.
+/// Whether the speaker said anything worth answering. A transcript without substance ends the
+/// turn in silence; one with it is answered.
 ///
 /// Deliberately generous. The cost of getting this wrong in one direction is a reply to a
-/// cough; in the other it is telling someone who spoke perfectly clearly that they were not
-/// understood, and there is nothing they can do about it but say the same word again.
+/// cough or a hum - measured on the real filter (2026-09-23), "Hmm." came back as a question
+/// and was answered; in the other it is silence for someone who spoke, who has to say it again.
 ///
 /// A word counts when it could be one: it carries a vowel, or it is not written in the Latin
 /// alphabet at all, where that test means nothing. "mmph" is a noise, "ok" and "why" are
 /// answers, and a greeting in Devanagari is a greeting.
-fn has_substance(raw: &str) -> bool {
+pub(crate) fn has_substance(raw: &str) -> bool {
     raw.split_whitespace()
         .map(|word| {
             word.trim_matches(|c: char| !c.is_alphanumeric())
@@ -269,21 +275,262 @@ fn has_substance(raw: &str) -> bool {
         })
 }
 
-pub fn accept_verdict(raw: &str, verdict: FilterVerdict) -> FilterVerdict {
-    match verdict {
-        FilterVerdict::Clean(cleaned) if !resembles_original(raw, &cleaned) => {
-            // The filter invented. The raw transcript is imperfect but it is what the speaker
-            // actually said, which is the property that matters.
-            FilterVerdict::Clean(raw.trim().to_string())
+// ============================================================================================
+// Meaning preservation
+// ============================================================================================
+
+/// Words that reverse what a sentence asks for.
+///
+/// Written without apostrophes because [`normalise_words`] strips them: "don't" arrives as
+/// "dont", and "do not" arrives as two words one of which is "not". Either spelling carries one
+/// negation, which is what gets counted.
+const NEGATIONS: [&str; 28] = [
+    "not", "no", "never", "none", "nobody", "nothing", "nowhere", "neither", "nor", "without",
+    "cannot", "cant", "dont", "doesnt", "didnt", "wont", "wouldnt", "shouldnt", "couldnt", "isnt",
+    "arent", "wasnt", "werent", "havent", "hasnt", "hadnt", "aint", "except",
+];
+
+/// Words that place something in time. Changing or dropping one of these moves an appointment.
+const CALENDAR: [&str; 31] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+    "today",
+    "tomorrow",
+    "yesterday",
+    "tonight",
+    "morning",
+    "afternoon",
+    "evening",
+    "midnight",
+    "noon",
+    "weekend",
+    "week",
+    "month",
+];
+
+/// The value of a single number word, or of a run of digits.
+fn number_word(word: &str) -> Option<u64> {
+    if !word.is_empty() && word.chars().all(|c| c.is_ascii_digit()) {
+        return word.parse().ok();
+    }
+    Some(match word {
+        "zero" | "oh" | "nought" => 0,
+        "one" => 1,
+        "two" => 2,
+        "three" => 3,
+        "four" => 4,
+        "five" => 5,
+        "six" => 6,
+        "seven" => 7,
+        "eight" => 8,
+        "nine" => 9,
+        "ten" => 10,
+        "eleven" => 11,
+        "twelve" => 12,
+        "thirteen" => 13,
+        "fourteen" => 14,
+        "fifteen" => 15,
+        "sixteen" => 16,
+        "seventeen" => 17,
+        "eighteen" => 18,
+        "nineteen" => 19,
+        "twenty" => 20,
+        "thirty" => 30,
+        "forty" => 40,
+        "fifty" => 50,
+        "sixty" => 60,
+        "seventy" => 70,
+        "eighty" => 80,
+        "ninety" => 90,
+        "hundred" => 100,
+        "thousand" => 1_000,
+        "million" => 1_000_000,
+        "billion" => 1_000_000_000,
+        _ => return None,
+    })
+}
+
+/// Keep digit sequences distinct from quantities: a PIN is not the sum of its digits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NumberRun {
+    value: Option<u64>,
+    digits: String,
+    sequence: bool,
+}
+
+fn numbers_in(words: &[String]) -> Vec<NumberRun> {
+    let mut found = Vec::new();
+    let numeric = |word: &str| !word.is_empty() && word.bytes().all(|c| c.is_ascii_digit());
+    let is_number = |word: &String| numeric(word) || number_word(word).is_some();
+    let mut rest = words;
+    while let Some(start) = rest.iter().position(is_number) {
+        rest = &rest[start..];
+        let count = rest.iter().take_while(|word| is_number(word)).count();
+        let run = &rest[..count];
+        let mut digits = String::new();
+        let (mut total, mut current) = (Some(0u64), Some(0u64));
+        for word in run {
+            let value = number_word(word);
+            if numeric(word) {
+                digits.push_str(word); // Leading zeros and oversized identifiers are significant.
+            } else if let Some(value) = value {
+                digits.push_str(&value.to_string());
+            }
+            match value {
+                Some(100) => current = current.and_then(|n| n.max(1).checked_mul(100)),
+                Some(scale @ (1_000 | 1_000_000 | 1_000_000_000)) => {
+                    total = total.zip(current).and_then(|(t, n)| {
+                        n.max(1).checked_mul(scale).and_then(|v| t.checked_add(v))
+                    });
+                    current = Some(0);
+                }
+                Some(value) => current = current.and_then(|n| n.checked_add(value)),
+                None => current = None,
+            }
         }
+        found.push(NumberRun {
+            value: total.zip(current).and_then(|(t, n)| t.checked_add(n)),
+            digits,
+            sequence: (count > 1
+                && (run.iter().all(|word| numeric(word))
+                    || run
+                        .iter()
+                        .all(|word| number_word(word).is_some_and(|n| n < 10))))
+                || run
+                    .iter()
+                    .any(|word| numeric(word) && word.len() > 1 && word.starts_with('0')),
+        });
+        rest = &rest[count..];
+    }
+    found
+}
+
+/// Whether a repair says the same thing as what was said.
+///
+/// [`resembles_original`] asks whether the filter invented: every word it kept has to be
+/// traceable to something the speaker said. That is a check in one direction only, and three
+/// ways of changing a question survive it, because each one is built entirely from words that
+/// really were said:
+///
+/// - dropping the negation: "do not book Tuesday" becomes "book Tuesday",
+/// - swapping a number for a similarly spelled one: "fifteen minutes" becomes "fifty minutes",
+/// - stopping early: "what is my account number" becomes "what is my".
+///
+/// All three were accepted. A repair is meant to correct how a word was *heard*, so none of
+/// them is a repair at all - and unlike an obvious invention, each produces a fluent sentence
+/// that the rest of the conversation then treats as what the speaker asked for.
+///
+/// When this refuses, the raw transcript is used instead. That is unpunctuated and sometimes
+/// misspelled, and it is what the person actually said, which is the property worth keeping.
+pub fn preserves_meaning(raw: &str, cleaned: &str) -> bool {
+    let raw_words = normalise_words(raw);
+    let cleaned_words = normalise_words(cleaned);
+    if raw_words.is_empty() {
+        return true;
+    }
+    // A translation replaces every word by design, so nothing below measures anything. The
+    // length check in `resembles_original` is what guards that case.
+    if !is_latin_script(raw) && is_latin_script(cleaned) {
+        return true;
+    }
+
+    let negations = |words: &[String]| {
+        words
+            .iter()
+            .filter(|word| NEGATIONS.contains(&word.as_str()))
+            .count()
+    };
+    if negations(&cleaned_words) != negations(&raw_words) {
+        return false;
+    }
+
+    let calendar = |words: &[String]| {
+        words
+            .iter()
+            .filter(|word| CALENDAR.contains(&word.as_str()))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let original_calendar = calendar(&raw_words);
+    if !original_calendar.is_empty() && original_calendar != calendar(&cleaned_words) {
+        return false;
+    }
+
+    let original = numbers_in(&raw_words);
+    let repaired = numbers_in(&cleaned_words);
+    if original.len() != repaired.len()
+        || original.iter().zip(&repaired).any(|(a, b)| {
+            a.digits != b.digits
+                && (a.sequence || b.sequence || a.value.is_none() || a.value != b.value)
+        })
+    {
+        return false;
+    }
+
+    // How much of what was said survives. The other direction of the resemblance check, and the
+    // one that catches a repair stopping early. Below this length a short utterance is
+    // legitimately rewritten whole - "ok" into "Okay" shares no spelling at all - and the
+    // measure says nothing useful.
+    if count_units(raw) <= 2 {
+        return true;
+    }
+    let spoken: Vec<&String> = raw_words
+        .iter()
+        // Numbers are checked above, exactly, and "twenty five" written back as "25" shares no
+        // spelling with what it came from. Counting them here as well would refuse the one
+        // rewriting the filter is most obviously right to make.
+        .filter(|word| !FILLER.contains(&word.as_str()) && number_word(word).is_none())
+        .collect();
+    if spoken.is_empty() {
+        return true;
+    }
+    // Repetition and false starts are dropped legitimately, and a word the filter corrected is
+    // still grounded in its correction, so this only has to tolerate a little.
+    const MIN_SURVIVING: f32 = 0.7;
+    let kept = spoken
+        .iter()
+        .filter(|word| is_grounded(word, &cleaned_words))
+        .count();
+    kept as f32 / spoken.len() as f32 >= MIN_SURVIVING
+}
+
+/// The question to answer: the filter's repair, or the raw transcript when the filter overreached.
+pub fn accept_verdict(raw: &str, verdict: FilterVerdict) -> String {
+    match verdict {
+        FilterVerdict::Clean(cleaned)
+            if resembles_original(raw, &cleaned) && preserves_meaning(raw, &cleaned) =>
+        {
+            cleaned
+        }
+        // The filter invented, or it changed what was asked. The raw transcript is imperfect
+        // but it is what the speaker actually said, which is the property that matters.
+        FilterVerdict::Clean(_) => raw.trim().to_string(),
         // The mirror of that, and the one that is actually maddening to sit through. The filter
         // is a small model reading one line out of context, and it will call a short or
         // unfamiliar utterance garbled - a greeting in another script, a bare "ok", a one-word
         // question. Spoken back, that is "could you say that again?" to someone who said it
         // perfectly clearly, and saying it again produces the same verdict, so the
-        // conversation cannot move. It may only refuse a transcript with nothing in it.
-        FilterVerdict::Ask(_) if has_substance(raw) => FilterVerdict::Clean(raw.trim().to_string()),
-        other => other,
+        // conversation cannot move. A transcript with nothing in it never reaches the filter -
+        // it ends the turn in silence first (`Session::on_transcript`) - so every request to
+        // repeat is one of these, and is overruled.
+        FilterVerdict::Ask(_) => raw.trim().to_string(),
     }
 }
 
@@ -313,18 +560,20 @@ pub fn to_speakable(text: &str) -> String {
         let character = characters[index];
 
         if character.is_ascii_digit() {
-            let start = index;
-            while index < characters.len()
-                && (characters[index].is_ascii_digit()
-                    || (characters[index] == '.'
-                        && index + 1 < characters.len()
-                        && characters[index + 1].is_ascii_digit()))
-            {
-                index += 1;
-            }
-            let number: String = characters[start..index].iter().collect();
-            push_spaced(&mut out, &number_to_words(&number));
+            let (spoken, next) = read_number(&characters, index);
+            push_spaced(&mut out, &spoken);
+            index = next;
             continue;
+        }
+
+        // A currency sign is written before its amount and said after it: "$5" is "five dollars".
+        if let Some((one, many)) = currency(character) {
+            if characters.get(index + 1).is_some_and(char::is_ascii_digit) {
+                let (spoken, next) = read_amount(&characters, index + 1, one, many);
+                push_spaced(&mut out, &spoken);
+                index = next;
+                continue;
+            }
         }
 
         // Dashes and ellipses are how a writer marks a pause, and a synthesiser reads a comma as
@@ -350,6 +599,7 @@ pub fn to_speakable(text: &str) -> String {
             '$' => Some("dollars"),
             '£' => Some("pounds"),
             '€' => Some("euros"),
+            '₹' => Some("rupees"),
             '°' => Some("degrees"),
             '/' => Some("slash"),
             _ => None,
@@ -446,39 +696,203 @@ const TENS: [&str; 10] = [
     "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
 ];
 
-/// Spells a number the way it would be read aloud.
-pub fn number_to_words(number: &str) -> String {
-    if let Some((whole, fraction)) = number.split_once('.') {
-        let whole = integer_to_words(whole);
-        let digits: Vec<String> = fraction
-            .chars()
-            .filter(|character| character.is_ascii_digit())
-            .map(|digit| ONES[digit as usize - '0' as usize].to_string())
-            .collect();
-        return format!("{whole} point {}", digits.join(" "));
-    }
-    integer_to_words(number)
+/// A number as it was written.
+struct Written {
+    /// The digits of the whole part, grouping commas removed.
+    whole: String,
+    fraction: Option<String>,
+    /// Written with thousands separators, as a quantity is and an account number is not.
+    grouped: bool,
+    /// Index just past it.
+    end: usize,
 }
 
-fn integer_to_words(digits: &str) -> String {
-    let trimmed = digits.trim_start_matches('0');
+fn scan_number(characters: &[char], start: usize) -> Written {
+    let digit_at = |at: usize| characters.get(at).is_some_and(char::is_ascii_digit);
+    let mut index = start;
+    let mut whole = String::new();
+    let mut grouped = false;
+    while index < characters.len() {
+        if characters[index].is_ascii_digit() {
+            whole.push(characters[index]);
+            index += 1;
+        } else if characters[index] == ','
+            && (1..=3).all(|k| digit_at(index + k))
+            && !digit_at(index + 4)
+        {
+            // "384,000": a comma followed by exactly three digits groups them. "1,2,3" is a list.
+            grouped = true;
+            index += 1;
+        } else {
+            break;
+        }
+    }
+    let mut fraction = None;
+    if characters.get(index) == Some(&'.') && digit_at(index + 1) {
+        index += 1;
+        let mut digits = String::new();
+        while digit_at(index) {
+            digits.push(characters[index]);
+            index += 1;
+        }
+        fraction = Some(digits);
+    }
+    Written {
+        whole,
+        fraction,
+        grouped,
+        end: index,
+    }
+}
+
+/// Reads the number starting at `start`, returning the words and the index just past it.
+fn read_number(characters: &[char], start: usize) -> (String, usize) {
+    let written = scan_number(characters, start);
+    let end = written.end;
+    let two_digits = |at: usize| {
+        (0..2).all(|k| characters.get(at + k).is_some_and(char::is_ascii_digit))
+            && !characters.get(at + 2).is_some_and(char::is_ascii_digit)
+    };
+    // "9:30" is a time, read "nine thirty" - not "nine: thirty".
+    if written.fraction.is_none()
+        && !written.grouped
+        && written.whole.len() <= 2
+        && characters.get(end) == Some(&':')
+        && two_digits(end + 1)
+    {
+        let hour: u64 = written.whole.parse().unwrap_or(0);
+        let minute: u64 = characters[end + 1..end + 3]
+            .iter()
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0);
+        if hour <= 24 && minute < 60 {
+            let spoken = match minute {
+                0 => format!("{} o'clock", spell(hour)),
+                1..=9 => format!("{} oh {}", spell(hour), spell(minute)),
+                _ => format!("{} {}", spell(hour), spell(minute)),
+            };
+            return (spoken, end + 3);
+        }
+    }
+    // "1st", "22nd": the suffix is how the number is said, not letters to read after it.
+    if written.fraction.is_none() {
+        let suffix: String = characters
+            .iter()
+            .skip(end)
+            .take(2)
+            .collect::<String>()
+            .to_ascii_lowercase();
+        let word_ends = !characters.get(end + 2).is_some_and(|c| c.is_alphanumeric());
+        if matches!(suffix.as_str(), "st" | "nd" | "rd" | "th") && word_ends {
+            return (ordinal(&whole_words(&written)), end + 2);
+        }
+    }
+    (cardinal(&written), end)
+}
+
+fn cardinal(written: &Written) -> String {
+    let whole = whole_words(written);
+    match &written.fraction {
+        Some(fraction) => format!("{whole} point {}", digit_by_digit(fraction)),
+        None => whole,
+    }
+}
+
+fn digit_by_digit(digits: &str) -> String {
+    digits
+        .chars()
+        .filter_map(|digit| digit.to_digit(10))
+        .map(|digit| ONES[digit as usize])
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn whole_words(written: &Written) -> String {
+    let trimmed = written.whole.trim_start_matches('0');
     if trimmed.is_empty() {
         return "zero".into();
     }
-    // Beyond six digits, reading digit by digit is both correct and what a listener expects for
-    // things like account or phone numbers.
-    if trimmed.len() > 6 {
-        return trimmed
-            .chars()
-            .map(|digit| ONES[digit as usize - '0' as usize])
-            .collect::<Vec<_>>()
-            .join(" ");
+    let value = trimmed.parse::<u64>().ok();
+    match value {
+        // Written with separators, it is a quantity however long it is.
+        Some(value) if written.grouped && value < 1_000_000_000_000_000 => spell(value),
+        // Beyond six digits without them, reading digit by digit is what a listener expects:
+        // an account or a phone number read as one enormous quantity is unusable.
+        _ if written.grouped || trimmed.len() > 6 => digit_by_digit(trimmed),
+        // Four digits in the range years fall in are read as a year: "nineteen ninety", "twenty
+        // twenty four". For a quantity that reading is still ordinary English - "fifteen hundred".
+        Some(value) if trimmed.len() == 4 && matches!(value, 1_100..=1_999 | 2_010..=2_099) => {
+            let (high, low) = (value / 100, value % 100);
+            match low {
+                0 => format!("{} hundred", spell(high)),
+                1..=9 => format!("{} oh {}", spell(high), spell(low)),
+                _ => format!("{} {}", spell(high), spell(low)),
+            }
+        }
+        Some(value) => spell(value),
+        None => digit_by_digit(trimmed),
     }
-    let value: u64 = trimmed.parse().unwrap_or(0);
-    spell(value)
+}
+
+/// The ordinal of a spelled number: "twenty two" becomes "twenty second".
+fn ordinal(cardinal: &str) -> String {
+    let (head, last) = match cardinal.rsplit_once(' ') {
+        Some((head, last)) => (format!("{head} "), last),
+        None => (String::new(), cardinal),
+    };
+    let last = match last {
+        "one" => "first".to_string(),
+        "two" => "second".to_string(),
+        "three" => "third".to_string(),
+        "five" => "fifth".to_string(),
+        "eight" => "eighth".to_string(),
+        "nine" => "ninth".to_string(),
+        "twelve" => "twelfth".to_string(),
+        word if word.ends_with('y') => format!("{}ieth", &word[..word.len() - 1]),
+        word => format!("{word}th"),
+    };
+    format!("{head}{last}")
+}
+
+/// What a currency sign is called, singular and plural.
+fn currency(character: char) -> Option<(&'static str, &'static str)> {
+    match character {
+        '$' => Some(("dollar", "dollars")),
+        '£' => Some(("pound", "pounds")),
+        '€' => Some(("euro", "euros")),
+        '₹' => Some(("rupee", "rupees")),
+        _ => None,
+    }
+}
+
+/// An amount after a currency sign: "$1.50" is "one dollar fifty".
+fn read_amount(characters: &[char], start: usize, one: &str, many: &str) -> (String, usize) {
+    let written = scan_number(characters, start);
+    let whole = whole_words(&written);
+    let unit = if written.whole.trim_start_matches('0') == "1" {
+        one
+    } else {
+        many
+    };
+    let spoken = match &written.fraction {
+        Some(cents) if cents.len() == 2 => match cents.parse::<u64>().unwrap_or(0) {
+            0 => format!("{whole} {unit}"),
+            cents => format!("{whole} {unit} {}", spell(cents)),
+        },
+        Some(fraction) => format!("{whole} point {} {many}", digit_by_digit(fraction)),
+        None => format!("{whole} {unit}"),
+    };
+    (spoken, written.end)
 }
 
 fn spell(value: u64) -> String {
+    const SCALES: [(u64, &str); 4] = [
+        (1_000_000_000_000, "trillion"),
+        (1_000_000_000, "billion"),
+        (1_000_000, "million"),
+        (1_000, "thousand"),
+    ];
     match value {
         0..=19 => ONES[value as usize].to_string(),
         20..=99 => {
@@ -496,10 +910,14 @@ fn spell(value: u64) -> String {
             }
         }
         _ => {
-            let thousands = format!("{} thousand", spell(value / 1000));
-            match value % 1000 {
-                0 => thousands,
-                rest => format!("{thousands} {}", spell(rest)),
+            let (size, name) = SCALES
+                .into_iter()
+                .find(|(size, _)| value >= *size)
+                .unwrap_or(SCALES[3]);
+            let head = format!("{} {name}", spell(value / size));
+            match value % size {
+                0 => head,
+                rest => format!("{head} {}", spell(rest)),
             }
         }
     }
@@ -654,12 +1072,8 @@ impl ReplyChunker {
         None
     }
 
-    /// Cuts at the last boundary of at least this strength, if doing so leaves a phrase worth
-    /// speaking on its own.
-    ///
-    /// The minimum is what stops "Hello, how can I help?" from being delivered as a lone "Hello,"
-    /// followed by a pause. A one- or two-word fragment costs a whole utterance's worth of
-    /// startup and trailing silence to say almost nothing, and it is heard as a stutter.
+    /// Where the `hard`-th word of the buffer ends, once a space has followed it: the furthest
+    /// point one phrase may run to.
     fn word_limit(&self, hard: usize) -> Option<usize> {
         let mut in_word = false;
         let mut words = 0;
@@ -677,6 +1091,12 @@ impl ReplyChunker {
         None
     }
 
+    /// Cuts at the last boundary of at least this strength, if doing so leaves a phrase worth
+    /// speaking on its own.
+    ///
+    /// The minimum is what stops "Hello, how can I help?" from being delivered as a lone "Hello,"
+    /// followed by a pause. A one- or two-word fragment costs a whole utterance's worth of
+    /// startup and trailing silence to say almost nothing, and it is heard as a stutter.
     fn cut_at(&mut self, strength: BoundaryStrength, hard: usize) -> Option<String> {
         let end = self.word_limit(hard).unwrap_or(self.buffer.len());
         let cut = last_boundary_of(&self.buffer[..end], strength)?;
@@ -736,6 +1156,49 @@ pub enum BoundaryStrength {
     Sentence,
 }
 
+/// How much later than its share of the text a clause can end in the audio. Of 43 clause and
+/// sentence ends in the renders `examples/phrasepace.rs` makes, the latest came 495 ms after
+/// that estimate.
+const LATEST_CLAUSE_END_MS: usize = 500;
+
+/// The part of a phrase that has certainly been heard, as a prefix of `text`.
+///
+/// A phrase can run for half a minute, so an interruption part-way through one used to leave no
+/// trace of it: the model was told nothing of what it had just said, and started over. Speech
+/// comes with no word timings, but where a clause ends is predictable from its share of the text
+/// (see [`LATEST_CLAUSE_END_MS`]). Anything counted has to be certain - claiming words the listener
+/// never heard is the error the reply ledger exists to prevent - so only whole clauses count,
+/// and only once playback is past the latest point each could have ended. The last clause is
+/// never counted here; the phrase's own completion credits it.
+///
+/// `heard_ms` is audio the page has confirmed playing. `total_ms` is the phrase's full length,
+/// known once synthesis has finished. Until then, the phrase is assumed to be spoken at
+/// [`SLOWEST_MS_PER_CHAR`], which places every clause end as late as it can be.
+pub fn heard_part(text: &str, heard_ms: usize, total_ms: Option<usize>) -> &str {
+    let chars = text.chars().count().max(1);
+    let mut heard = 0;
+    for (index, (byte, c)) in text.char_indices().enumerate() {
+        let after = byte + c.len_utf8();
+        // "384,000" and "9:30" are not clause breaks; a break is followed by a space.
+        if !matches!(c, '.' | '!' | '?' | ',' | ';' | ':')
+            || !text[after..].starts_with(char::is_whitespace)
+        {
+            continue;
+        }
+        let through = index + 1;
+        let latest_end = match total_ms {
+            Some(total) => through * total / chars,
+            None => through * SLOWEST_MS_PER_CHAR,
+        } + LATEST_CLAUSE_END_MS;
+        if latest_end > heard_ms {
+            break;
+        }
+        heard = after;
+    }
+    // A comma is where the cut came, not part of what was said.
+    text[..heard].trim_end_matches([',', ';', ':'])
+}
+
 /// How long to stay quiet after a phrase, given how that phrase ended.
 ///
 /// Each chunk is synthesised as its own utterance and they are queued back to back, so without
@@ -776,9 +1239,9 @@ pub fn pause_after_ms(text: &str) -> u64 {
 
 /// Finds the last boundary of at least `minimum` strength.
 ///
-/// Two guards on the full stop matter, both ported from the legacy scheduler: a stop between
-/// digits is a decimal point, and a stop not followed by whitespace is an abbreviation or a
-/// version number. Treating either as a sentence end cuts a phrase in half mid-thought.
+/// Two guards on the full stop matter: a stop between digits is a decimal point, and a stop not
+/// followed by whitespace is an abbreviation or a version number. Treating either as a sentence
+/// end cuts a phrase in half mid-thought.
 pub fn last_boundary_of(text: &str, minimum: BoundaryStrength) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut fallback = None;
@@ -825,6 +1288,213 @@ fn nearest_boundary(text: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 64 characters. "Sure." ends at character 5 and "first," at 27.
+    const PASTA: &str = "Sure. Boil the water first, then add the pasta and stir it once.";
+
+    #[test]
+    fn a_clause_counts_as_heard_only_once_it_has_certainly_ended() {
+        // In a 3.2 s phrase, "Sure." takes up to 5/64 of it - 250 ms - and may end up to
+        // 500 ms later than that.
+        assert_eq!(heard_part(PASTA, 749, Some(3_200)), "");
+        assert_eq!(heard_part(PASTA, 750, Some(3_200)), "Sure.");
+        assert_eq!(heard_part(PASTA, 1_849, Some(3_200)), "Sure.");
+        // The comma is where the cut came, so it is not kept.
+        assert_eq!(
+            heard_part(PASTA, 1_850, Some(3_200)),
+            "Sure. Boil the water first"
+        );
+    }
+
+    #[test]
+    fn the_last_clause_is_left_to_the_phrase_finishing() {
+        // Playback of every sample is not proof the listener heard the end: the phrase's own
+        // acknowledgement is. Until then, the final clause stays unclaimed.
+        assert_eq!(
+            heard_part(PASTA, 3_200, Some(3_200)),
+            "Sure. Boil the water first"
+        );
+    }
+
+    #[test]
+    fn a_phrase_still_being_synthesised_is_assumed_to_be_spoken_slowly() {
+        // Its length is unknown, so every clause is placed as late as the slowest measured
+        // pace puts it: "Sure." by 5 x 56 ms, plus the 500 ms it may run late.
+        assert_eq!(heard_part(PASTA, 779, None), "");
+        assert_eq!(heard_part(PASTA, 780, None), "Sure.");
+        assert_eq!(heard_part(PASTA, 2_011, None), "Sure.");
+        assert_eq!(heard_part(PASTA, 2_012, None), "Sure. Boil the water first");
+    }
+
+    #[test]
+    fn separators_inside_numbers_are_not_clause_breaks() {
+        let moon = "The Moon is 384,000 kilometres away, at 9:30 tonight. Look up.";
+        // Past where "384," would end, but no clause has.
+        assert_eq!(heard_part(moon, 1_800, None), "");
+        assert_eq!(
+            heard_part(moon, 100_000, None),
+            "The Moon is 384,000 kilometres away, at 9:30 tonight."
+        );
+    }
+
+    #[test]
+    fn text_without_any_break_is_never_partly_claimed() {
+        assert_eq!(
+            heard_part("just one run of words", 100_000, Some(1_000)),
+            ""
+        );
+        assert_eq!(heard_part("", 100_000, None), "");
+    }
+
+    /// What the filter handed back, after the guard has had its say.
+    fn repaired(raw: &str, cleaned: &str) -> String {
+        accept_verdict(raw, FilterVerdict::Clean(cleaned.to_string()))
+    }
+
+    #[test]
+    fn a_repair_may_not_drop_the_negation() {
+        // Every word of "book Tuesday" really was said, so the resemblance check passes it. It
+        // is also the opposite of what was asked for.
+        assert_eq!(
+            repaired("do not book tuesday", "Book Tuesday."),
+            "do not book tuesday",
+        );
+        assert_eq!(
+            repaired("i cant make it on friday", "I can make it on Friday."),
+            "i cant make it on friday",
+        );
+        // Contracting or expanding a negation is not dropping it.
+        assert_eq!(
+            repaired("i do not want that", "I don't want that."),
+            "I don't want that.",
+        );
+    }
+
+    #[test]
+    fn a_repair_may_not_change_a_number() {
+        assert_eq!(
+            repaired("give me fifteen minutes", "Give me fifty minutes."),
+            "give me fifteen minutes",
+        );
+        // Writing the same quantity a different way is a repair, not a change.
+        assert_eq!(
+            repaired("set it for twenty five past", "Set it for 25 past."),
+            "Set it for 25 past.",
+        );
+        // Digits read out one at a time are the same string of digits.
+        assert_eq!(
+            repaired("my code is one one two", "My code is 112."),
+            "My code is 112.",
+        );
+    }
+
+    #[test]
+    fn a_repair_preserves_ordered_identifiers_quantities_and_polarity() {
+        for (raw, changed) in [
+            (
+                "my pin is one two three four",
+                "My pin is four three two one.",
+            ),
+            ("my code is zero zero one", "My code is 1."),
+            ("my code is 001", "My code is 1."),
+            (
+                "give Alice two and Bob three",
+                "Give Alice three and Bob two.",
+            ),
+            ("do book Tuesday", "Do not book Tuesday."),
+            (
+                "move it from Tuesday to Friday",
+                "Move it from Friday to Tuesday.",
+            ),
+            ("give me a minute", "Give me two minutes."),
+        ] {
+            assert_eq!(repaired(raw, changed), raw, "accepted {changed:?}");
+        }
+        assert_eq!(
+            repaired("my code is zero zero one", "My code is 001."),
+            "My code is 001."
+        );
+    }
+
+    #[test]
+    fn oversized_numbers_cannot_overflow_or_match_wrapped_quantities() {
+        for raw in [
+            "my number is 18446744073709551615 one",
+            "my number is 99999999999999999999999999999999",
+            "my number is billion billion billion billion",
+        ] {
+            assert!(preserves_meaning(raw, raw));
+            assert!(!preserves_meaning(raw, "my number is zero"));
+        }
+    }
+
+    #[test]
+    fn a_repair_may_not_move_a_day_or_a_month() {
+        assert_eq!(
+            repaired("move it to thursday", "Move it to Tuesday."),
+            "move it to thursday",
+        );
+        assert_eq!(
+            repaired("book it for tomorrow morning", "Book it for tomorrow."),
+            "book it for tomorrow morning",
+        );
+    }
+
+    #[test]
+    fn a_repair_may_not_stop_partway_through_the_question() {
+        assert_eq!(
+            repaired("what is my account number", "What is my"),
+            "what is my account number",
+        );
+        assert_eq!(
+            repaired(
+                "book a table for four except friday",
+                "Book a table for four.",
+            ),
+            "book a table for four except friday",
+        );
+    }
+
+    #[test]
+    fn ordinary_repairs_still_get_through() {
+        // The guard must not cost the filter its actual job.
+        assert_eq!(
+            repaired("wut is the wether tooday", "What is the weather today?"),
+            "What is the weather today?",
+        );
+        assert_eq!(
+            repaired(
+                "can you turn on the kitchen lights",
+                "Can you turn on the kitchen lights?"
+            ),
+            "Can you turn on the kitchen lights?",
+        );
+        assert_eq!(repaired("ok", "Okay."), "Okay.");
+        assert_eq!(repaired("hey zen", "Hey Zen."), "Hey Zen.");
+        // Stutters and false starts are not the question getting shorter.
+        assert_eq!(
+            repaired("i i i want a a table for two", "I want a table for two."),
+            "I want a table for two.",
+        );
+        assert_eq!(
+            repaired(
+                "um so i was thinking about the meeting",
+                "So I was thinking about the meeting."
+            ),
+            "So I was thinking about the meeting.",
+        );
+    }
+
+    #[test]
+    fn a_translation_is_still_allowed_through() {
+        // Nothing above can measure a rewrite that changes every word by design, and refusing
+        // them would leave the speaker answered in a language they did not use.
+        let hindi = "मुझे कल की मीटिंग के बारे में बताओ";
+        assert_eq!(
+            repaired(hindi, "Tell me about tomorrow's meeting."),
+            "Tell me about tomorrow's meeting.",
+        );
+    }
 
     #[test]
     fn a_translation_out_of_an_unspaced_script_is_not_read_as_invention() {
@@ -1184,8 +1854,8 @@ deal more than size ever did.";
 
     #[test]
     fn a_marked_ask_verdict_carries_the_models_own_words() {
-        // The point of a dynamic clarification: it can name what it half-heard, which gives the
-        // speaker something to correct instead of repeating themselves identically.
+        // Whatever the filter asks is carried whole, so the verdict is read as a request and never
+        // as the words the speaker said.
         assert_eq!(
             parse_filter_verdict("ASK: Did you say the kitchen light, or the kitchen fan?"),
             FilterVerdict::Ask("Did you say the kitchen light, or the kitchen fan?".into())
@@ -1222,10 +1892,7 @@ deal more than size ever did.";
     fn a_genuine_repair_is_accepted() {
         let raw = "turn on the kitchin lite";
         let verdict = FilterVerdict::Clean("turn on the kitchen light".into());
-        assert_eq!(
-            accept_verdict(raw, verdict),
-            FilterVerdict::Clean("turn on the kitchen light".into())
-        );
+        assert_eq!(accept_verdict(raw, verdict), "turn on the kitchen light");
     }
 
     #[test]
@@ -1238,7 +1905,7 @@ deal more than size ever did.";
             FilterVerdict::Clean("Please book me a table for two at eight o'clock".into());
         assert_eq!(
             accept_verdict(raw, verdict),
-            FilterVerdict::Clean(raw.to_string()),
+            raw,
             "an invented correction must lose to the imperfect truth"
         );
     }
@@ -1249,10 +1916,7 @@ deal more than size ever did.";
         let verdict = FilterVerdict::Clean(
             "Please turn the lights off in the living room and the kitchen as well".into(),
         );
-        assert!(matches!(
-            accept_verdict(raw, verdict),
-            FilterVerdict::Clean(text) if text == "lights off"
-        ));
+        assert_eq!(accept_verdict(raw, verdict), "lights off");
     }
 
     #[test]
@@ -1263,14 +1927,33 @@ deal more than size ever did.";
     }
 
     #[test]
-    fn an_ask_verdict_stands_when_there_was_nothing_to_hear() {
-        let verdict = FilterVerdict::Ask("Sorry, could you repeat that?".into());
-        for noise in ["mmph", "uh um", "hmm", "  ", "shh"] {
-            assert_eq!(
-                accept_verdict(noise, verdict.clone()),
-                verdict,
+    fn hesitation_and_noise_have_no_substance() {
+        for noise in [
+            "mmph",
+            "uh um",
+            "hmm",
+            "  ",
+            "shh",
+            "Hmm.",
+            "Um... uhh.",
+            "Hmmmm?",
+            "Er, erm.",
+        ] {
+            assert!(
+                !has_substance(noise),
                 "{noise:?} is a noise, not an utterance"
             );
+        }
+        for spoken in [
+            "ok",
+            "Why.",
+            "Hmm, what about tomorrow?",
+            "Oh.",
+            "Uh-huh.",
+            "हेलो",
+            "Zen.",
+        ] {
+            assert!(has_substance(spoken), "{spoken:?} was said");
         }
     }
 
@@ -1285,7 +1968,7 @@ deal more than size ever did.";
         {
             assert_eq!(
                 accept_verdict(spoken, verdict.clone()),
-                FilterVerdict::Clean(spoken.trim().to_string()),
+                spoken.trim(),
                 "{spoken:?} was spoken clearly and must reach the reply"
             );
         }
@@ -1322,7 +2005,73 @@ deal more than size ever did.";
     #[test]
     fn digits_are_spelled_out() {
         assert_eq!(to_speakable("I have 3 apples"), "I have three apples");
-        assert_eq!(to_speakable("in 2024"), "in two thousand twenty four");
+        assert_eq!(
+            to_speakable("about 250 of them"),
+            "about two hundred fifty of them"
+        );
+    }
+
+    #[test]
+    fn a_grouped_number_is_one_quantity() {
+        // Read one group at a time, this came out as "three hundred eighty four, zero".
+        assert_eq!(
+            to_speakable("The Moon is 384,000 km away."),
+            "The Moon is three hundred eighty four thousand km away."
+        );
+        assert_eq!(to_speakable("1,000,000 people"), "one million people");
+        assert_eq!(
+            to_speakable("7,900,000,000 of us"),
+            "seven billion nine hundred million of us"
+        );
+        // A comma that does not group three digits is still a comma.
+        assert_eq!(to_speakable("pick 1,2 or 3"), "pick one, two or three");
+    }
+
+    #[test]
+    fn a_time_is_read_as_a_time() {
+        assert_eq!(
+            to_speakable("the dentist at 9:30, then lunch"),
+            "the dentist at nine thirty, then lunch"
+        );
+        assert_eq!(to_speakable("at 10:05"), "at ten oh five");
+        assert_eq!(to_speakable("by 12:00."), "by twelve o'clock.");
+        // Not a time: the minutes do not exist.
+        assert_eq!(to_speakable("ratio 3:75"), "ratio three: seventy five");
+    }
+
+    #[test]
+    fn an_ordinal_is_said_as_one() {
+        assert_eq!(
+            to_speakable("the 1st, 2nd, 3rd and 4th"),
+            "the first, second, third and fourth"
+        );
+        assert_eq!(to_speakable("on the 22nd"), "on the twenty second");
+        assert_eq!(
+            to_speakable("her 11th and 20th"),
+            "her eleventh and twentieth"
+        );
+        assert_eq!(to_speakable("the 105th time"), "the one hundred fifth time");
+    }
+
+    #[test]
+    fn a_year_is_read_as_a_year() {
+        assert_eq!(to_speakable("in 1990"), "in nineteen ninety");
+        assert_eq!(to_speakable("in 2024"), "in twenty twenty four");
+        assert_eq!(to_speakable("in 1905"), "in nineteen oh five");
+        assert_eq!(to_speakable("by 1900"), "by nineteen hundred");
+        // The first decade of the century is said the other way.
+        assert_eq!(to_speakable("in 2005"), "in two thousand five");
+    }
+
+    #[test]
+    fn money_is_said_amount_first() {
+        assert_eq!(to_speakable("it costs $5"), "it costs five dollars");
+        assert_eq!(to_speakable("only $1.50"), "only one dollar fifty");
+        assert_eq!(to_speakable("₹500 each"), "five hundred rupees each");
+        assert_eq!(to_speakable("£2.00 flat"), "two pounds flat");
+        assert_eq!(to_speakable("€3.5"), "three point five euros");
+        // A sign on its own is still a word.
+        assert_eq!(to_speakable("in $ or ₹"), "in dollars or rupees");
     }
 
     #[test]

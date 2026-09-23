@@ -2,7 +2,7 @@
 //! Tie child processes to this one's lifetime.
 //!
 //! `llama-server` holds gigabytes of graphics memory and loopback port 8740. Dropping its
-//! handle kills it on an orderly exit, but nothing runs on an *inorderly* one - "End task"
+//! handle kills it on an orderly exit, but nothing runs on a *disorderly* one - "End task"
 //! in Task Manager, a crash, a stop from a debugger - and the survivor then holds the GPU
 //! and the port against the next launch. On a 4 GB card that is the difference between Zen
 //! starting and Zen refusing to.

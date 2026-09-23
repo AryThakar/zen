@@ -190,23 +190,22 @@ i5-12450H, 16 GB RAM) it printed:
 Starting Zen from C:\zen-ai
 Loading isolated speech recognition...
 Loading isolated speech synthesis...
-TTS: first chunk 605 ms, 2.96 s audio, 1.46 s wall
-TTS delivery: largest chunk gap 175 ms, startup buffer needed 16 ms
-ASR: 1641 ms, transcript: Hello, my name is Zen. I'm ready to help you.
+TTS: first chunk 602 ms, 2.72 s audio, 1.26 s wall
+TTS delivery: largest chunk gap 142 ms, startup buffer needed 8 ms
+ASR: 1693 ms, transcript: Hello, my name is Zen. I'm ready to help you.
 Model: You said the blue drawer.
-Talker: February has twenty nine days in a leap year.
-Talker: I can't set a timer for you, Arya. I don't have the ability to set timers or control devices.
-Talker listed every month, 274 characters
+Talker: February has twenty-nine days in a leap year, Arya.
+Talker: I can't set a timer for you, Arya. I don't have the ability to control any devices or set timers. I can talk about something else if you'd like.
+Talker listed every month, 438 characters
 Filter: "wut is the wether tooday" -> What is the weather today?
 Filter: "can you turn on the kitchen lights" -> Can you turn on the kitchen lights?
-Filter: "uh um uh" -> asked for a repeat: Sorry, I missed that - could you say it again?
-Filter: "so i was going through the notes from the meeting yesterday and ... before friday" -> So I was going through the notes ... before Friday
-TTS cancellation acknowledged in 5 ms
+Filter: "so i was going through the notes from the meeting yesterday and ... before friday" -> So I was going through the notes ... before Friday?
+TTS cancellation acknowledged in 4 ms
 Self-test passed, including synthesis after interruption. Speaker acoustics and audible interruption timing require a live session.
 ```
 
-(The long filter line is shortened here.) The model's wording varies from run to run; the
-checks are on what a reply contains, not its exact text.
+(The long filter line is shortened here; this run was on 23 September 2026.) The model's
+wording varies from run to run; the checks are on what a reply contains, not its exact text.
 
 ## Troubleshooting
 

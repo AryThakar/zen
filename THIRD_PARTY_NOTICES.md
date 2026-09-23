@@ -9,6 +9,7 @@ under its authors' licenses and is not affected by Zen's license.
 | Component | Use in Zen | License |
 | --- | --- | --- |
 | [Inter](https://rsms.me/inter/) typeface | Interface font, `src/client/inter.woff2` | SIL Open Font License 1.1 — full text in [`src/client/inter-LICENSE.txt`](src/client/inter-LICENSE.txt) |
+| [Newsreader](https://github.com/productiontype/Newsreader) typeface, © 2020 The Newsreader Project Authors | Zen's words in the conversation, `src/client/newsreader-latin.woff2` and `newsreader-latin-ext.woff2` (the Google Fonts cuts) | SIL Open Font License 1.1 — full text in [`src/client/newsreader-LICENSE.txt`](src/client/newsreader-LICENSE.txt) |
 | [Silero VAD](https://github.com/snakers4/silero-vad) | Voice activity detection, `src/silero_vad.onnx` | MIT |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime), via the [`ort`](https://github.com/pykeio/ort) crate | Runs the Silero VAD model | MIT |
 | [Tauri](https://github.com/tauri-apps/tauri) and the other Rust crates in `Cargo.lock` | Window, IPC, async runtime, HTTP, audio resampling | Each crate's own license, predominantly MIT and/or Apache-2.0 |

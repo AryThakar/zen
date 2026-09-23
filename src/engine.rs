@@ -9,18 +9,17 @@
 //! - There are exactly [`PARALLEL_SLOTS`] slots, and a [`SlotId`] outside that range cannot be
 //!   constructed - not by arithmetic, not by deserialization, not from a `/slots` response.
 //! - FILTER is always slot 0 and TALKER is always slot 1. Fixed, not scheduled.
-//! - The two slots run opposite [`KvPolicy`] disciplines.
+//! - The talker keeps a byte-identical prompt prefix so its cached conversation is reused turn
+//!   to turn; the filter carries nothing from one request to the next.
 //! - Every layer is pinned to the device; startup fails loudly rather than falling back to CPU.
 //! - Thinking is off at the server, not per request.
 
 use std::{
+    collections::VecDeque,
     ffi::OsString,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -29,8 +28,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::{
+    io::AsyncBufReadExt,
     process::{Child, Command},
     sync::Mutex as AsyncMutex,
+    task::JoinHandle,
 };
 
 // ============================================================================================
@@ -47,10 +48,12 @@ pub const PARALLEL_SLOTS: usize = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SlotKind {
-    /// Stateless. One classification per utterance - endpointing, routing, screening - then the
-    /// prompt is thrown away. Carries no conversation.
+    /// Stateless. Repairs one transcript, and nothing about a request depends on the one before.
+    /// Its fixed instruction is still a prefix, and is still cached.
     Filter,
-    /// Stateful. Holds the rolling conversation and speaks to the user.
+    /// Stateful. Holds the rolling conversation and speaks to the user. Its prompt prefix has to
+    /// stay byte-identical across turns for the server to reuse the cached conversation: one
+    /// changed byte near the front re-prefills all of it, heard as a stall before Zen speaks.
     Talker,
 }
 
@@ -65,13 +68,6 @@ impl SlotKind {
         match self {
             SlotKind::Filter => SlotId(0),
             SlotKind::Talker => SlotId(1),
-        }
-    }
-
-    pub const fn kv_policy(self) -> KvPolicy {
-        match self {
-            SlotKind::Filter => KvPolicy::PerRequest,
-            SlotKind::Talker => KvPolicy::StablePrefix,
         }
     }
 
@@ -145,30 +141,6 @@ impl std::fmt::Display for SlotId {
     }
 }
 
-/// How a slot treats its KV cache between requests.
-///
-/// The two policies are genuinely opposite. Encoded as a type rather than an `if slot == Talker`
-/// scattered through call sites, so a new code path has to name the policy it is assuming.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum KvPolicy {
-    /// TALKER. The prompt prefix must be byte-identical across turns so `llama-server` can reuse
-    /// the cached prefix. A single changed byte near the front re-prefills the whole
-    /// conversation, which on a voice pipeline is heard as a stall before the assistant speaks.
-    StablePrefix,
-    /// FILTER. Carries no conversation: one utterance, one verdict, and the utterance is
-    /// thrown away afterwards. The fixed instruction in front of it is still a prefix and is
-    /// still cached - what this policy means is that nothing about a request depends on what
-    /// the previous one contained.
-    PerRequest,
-}
-
-impl KvPolicy {
-    pub const fn prefix_stability_matters(self) -> bool {
-        matches!(self, KvPolicy::StablePrefix)
-    }
-}
-
 // ============================================================================================
 // Errors
 // ============================================================================================
@@ -179,8 +151,6 @@ pub enum EngineError {
     InvalidConfig(String),
     #[error("configured llama-server endpoint is already responding but is not owned by this runtime: {0}")]
     EndpointOccupied(String),
-    #[error("owned llama-server process exited during startup")]
-    ProcessExited,
     #[error("operation timed out: {0}")]
     Timeout(String),
     #[error("llama-server protocol error: {0}")]
@@ -209,7 +179,7 @@ pub const GPU_LAYERS_ALL: usize = 99;
 const MAX_PROTOCOL_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 #[cfg(windows)]
-const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone)]
 pub struct LlamaConfig {
@@ -430,7 +400,61 @@ pub struct ProcessOwner {
 struct ProcessInner {
     config: LlamaConfig,
     child: AsyncMutex<Option<Child>>,
-    pid: AtomicU32,
+    startup: Arc<Mutex<StartupLog>>,
+    /// Reads the server's error output for as long as it runs, so the pipe never fills.
+    reader: AsyncMutex<Option<JoinHandle<()>>>,
+}
+
+/// The last lines llama-server printed while starting, kept only until it is up.
+///
+/// Its output is otherwise thrown away: once a conversation is running, a server log is no
+/// place for anything of the user's to end up. While it starts, that output is the only
+/// account of why a launch failed - a model file it could not read, graphics memory it could
+/// not get - and without it the failure could only be described in general terms.
+#[derive(Debug, Default)]
+struct StartupLog {
+    lines: VecDeque<String>,
+    closed: bool,
+}
+
+impl StartupLog {
+    const LINES: usize = 12;
+    const LINE_CHARS: usize = 200;
+
+    fn push(&mut self, line: &str) {
+        let line = line.trim();
+        if self.closed || line.is_empty() {
+            return;
+        }
+        if self.lines.len() == Self::LINES {
+            self.lines.pop_front();
+        }
+        self.lines
+            .push_back(line.chars().take(Self::LINE_CHARS).collect());
+    }
+
+    /// Startup is over: forget what was printed, and keep nothing from here on.
+    fn close(&mut self) {
+        self.closed = true;
+        self.lines.clear();
+    }
+
+    /// The line that best says what went wrong: the last one reporting an error, or failing
+    /// that, the last one printed.
+    fn reason(&self) -> Option<&str> {
+        let failed = |line: &&String| {
+            let line = line.to_ascii_lowercase();
+            ["error", "failed", "unable", "cannot", "out of memory"]
+                .iter()
+                .any(|word| line.contains(word))
+        };
+        self.lines
+            .iter()
+            .rev()
+            .find(failed)
+            .or(self.lines.back())
+            .map(String::as_str)
+    }
 }
 
 impl ProcessOwner {
@@ -439,16 +463,17 @@ impl ProcessOwner {
             inner: Arc::new(ProcessInner {
                 config,
                 child: AsyncMutex::new(None),
-                pid: AtomicU32::new(0),
+                startup: Arc::default(),
+                reader: AsyncMutex::new(None),
             }),
         }
     }
 
-    pub async fn spawn(&self) -> Result<u32, EngineError> {
+    pub async fn spawn(&self) -> Result<(), EngineError> {
         let mut child_guard = self.inner.child.lock().await;
         if let Some(child) = child_guard.as_mut() {
             if child.try_wait()?.is_none() {
-                return child.id().ok_or(EngineError::ProcessExited);
+                return Ok(());
             }
             *child_guard = None;
         }
@@ -458,7 +483,7 @@ impl ProcessOwner {
             .args(self.inner.config.launch_args())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         #[cfg(windows)]
         {
@@ -468,7 +493,7 @@ impl ProcessOwner {
                 .creation_flags(WINDOWS_CREATE_NO_WINDOW);
         }
 
-        let child = command.spawn()?;
+        let mut child = command.spawn()?;
         // `kill_on_drop` covers an orderly exit. This covers the rest: a crash or an "End
         // task" would otherwise leave llama-server holding the GPU and port 8740 against
         // the next launch.
@@ -476,19 +501,48 @@ impl ProcessOwner {
         if let Some(handle) = child.raw_handle() {
             crate::job::adopt(handle);
         }
-        let pid = child.id().ok_or(EngineError::ProcessExited)?;
-        self.inner.pid.store(pid, Ordering::Release);
+        *self.inner.startup.lock().unwrap_or_else(|e| e.into_inner()) = StartupLog::default();
+        if let Some(stderr) = child.stderr.take() {
+            let log = Arc::clone(&self.inner.startup);
+            *self.inner.reader.lock().await = Some(tokio::spawn(async move {
+                let mut reader = tokio::io::BufReader::new(stderr);
+                let mut line = Vec::new();
+                // Read to the end whatever arrives, including invalid UTF-8: a pipe nobody
+                // empties fills up, and the server then blocks on its next log line.
+                loop {
+                    line.clear();
+                    match reader.read_until(b'\n', &mut line).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => log
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(&String::from_utf8_lossy(&line)),
+                    }
+                }
+            }));
+        }
         *child_guard = Some(child);
-        drop(child_guard);
-
-        Ok(pid)
+        Ok(())
     }
 
-    pub fn pid(&self) -> Option<u32> {
-        match self.inner.pid.load(Ordering::Acquire) {
-            0 => None,
-            pid => Some(pid),
+    /// The server is up. Nothing it prints from here on is kept.
+    fn started(&self) {
+        self.inner
+            .startup
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .close();
+    }
+
+    /// Why startup failed, in the server's own words, once it has stopped printing.
+    async fn startup_failure(&self) -> Option<String> {
+        if let Some(reader) = self.inner.reader.lock().await.take() {
+            // The process is gone by now, so the pipe is closing; this only waits for its last
+            // lines to be read.
+            let _ = tokio::time::timeout(Duration::from_secs(1), reader).await;
         }
+        let log = self.inner.startup.lock().unwrap_or_else(|e| e.into_inner());
+        log.reason().map(str::to_owned)
     }
 
     pub async fn is_alive(&self) -> Result<bool, EngineError> {
@@ -499,7 +553,6 @@ impl ProcessOwner {
         };
         if !alive {
             *child = None;
-            self.inner.pid.store(0, Ordering::Release);
         }
         Ok(alive)
     }
@@ -507,12 +560,10 @@ impl ProcessOwner {
     pub async fn terminate(&self) -> Result<bool, EngineError> {
         let child = self.inner.child.lock().await.take();
         let Some(mut child) = child else {
-            self.inner.pid.store(0, Ordering::Release);
             return Ok(false);
         };
         let _ = child.start_kill();
         let waited = tokio::time::timeout(self.inner.config.shutdown_timeout, child.wait()).await;
-        self.inner.pid.store(0, Ordering::Release);
         match waited {
             Ok(result) => {
                 let _ = result?;
@@ -542,64 +593,14 @@ pub struct LlamaClient {
 pub struct NativeSlotStatus {
     pub slot: SlotId,
     pub context_capacity: usize,
-    pub is_processing: bool,
 }
 
 /// What llama-server says it is actually running, after its own clamping.
 #[derive(Debug, Clone)]
 pub struct ServerProperties {
-    pub model_path: Option<String>,
     /// The PER-SLOT window. `--ctx-size` is divided across `--parallel` slots, so this is the
     /// total divided by [`PARALLEL_SLOTS`], not the value passed on the command line.
     pub per_slot_context: Option<usize>,
-}
-
-/// Decode statistics for one completed generation.
-#[derive(Debug, Clone, Default)]
-pub struct GenerationMetrics {
-    pub time_to_first_token: Option<Duration>,
-    pub wall_time: Duration,
-    pub content: String,
-    /// Thinking tokens, when the model emits them.
-    ///
-    /// Captured separately rather than discarded: with `--reasoning-format deepseek` a reasoning
-    /// model can spend an entire token budget here and leave `content` empty, and a probe that
-    /// only watched `content` would report "no tokens received" for a run that decoded fine.
-    pub reasoning: String,
-    pub prompt_tokens: Option<u64>,
-    pub prompt_ms: Option<f64>,
-    pub predicted_tokens: Option<u64>,
-    pub predicted_ms: Option<f64>,
-    /// Draft tokens proposed by the MTP model, when speculative decoding is active.
-    pub draft_tokens: Option<u64>,
-    /// Draft tokens the target model accepted.
-    pub draft_accepted: Option<u64>,
-}
-
-impl GenerationMetrics {
-    pub fn decode_tokens_per_second(&self) -> Option<f64> {
-        match (self.predicted_tokens, self.predicted_ms) {
-            (Some(tokens), Some(ms)) if ms > 0.0 => Some(tokens as f64 * 1000.0 / ms),
-            _ => None,
-        }
-    }
-
-    pub fn prefill_tokens_per_second(&self) -> Option<f64> {
-        match (self.prompt_tokens, self.prompt_ms) {
-            (Some(tokens), Some(ms)) if ms > 0.0 => Some(tokens as f64 * 1000.0 / ms),
-            _ => None,
-        }
-    }
-
-    /// Fraction of proposed draft tokens the target model kept.
-    pub fn draft_acceptance_rate(&self) -> Option<f64> {
-        match (self.draft_tokens, self.draft_accepted) {
-            (Some(drafted), Some(accepted)) if drafted > 0 => {
-                Some(accepted as f64 / drafted as f64)
-            }
-            _ => None,
-        }
-    }
 }
 
 impl LlamaClient {
@@ -607,6 +608,15 @@ impl LlamaClient {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .read_timeout(Duration::from_secs(15))
+            // Drop an idle connection before the server does, rather than racing it.
+            //
+            // llama-server is built on cpp-httplib, which closes a keep-alive connection after
+            // about five seconds of silence. A turn easily leaves a longer gap than that -
+            // recognition and synthesis both take longer - so the next request goes out on a
+            // socket the other end has already dropped and fails as it is sent. Retiring them
+            // here first costs one loopback handshake, which is not measurable next to the work
+            // either side of it.
+            .pool_idle_timeout(Duration::from_secs(2))
             .no_proxy()
             .build()?;
         Ok(Self {
@@ -626,14 +636,27 @@ impl LlamaClient {
             .is_ok_and(|response| response.status().is_success())
     }
 
+    /// Posts to one of the server's pure endpoints - rendering a template, counting tokens.
+    ///
+    /// Retried once if the request never reached the server. Connections are pooled, and the
+    /// server closes an idle one on its own schedule, so a request can be written into a socket
+    /// the other end has just dropped. It surfaces as a send failure rather than a status, and
+    /// on the reference machine it took down a whole turn about one run in two. Nothing here
+    /// changes state on the server, so sending it again is safe; a request that did arrive and
+    /// came back with a status is not retried, because that is an answer.
     async fn post_json(&self, path: &str, body: Value) -> Result<Value, EngineError> {
-        let response = self
-            .client
-            .post(format!("{}{path}", self.base_url))
-            .timeout(Duration::from_secs(5))
-            .json(&body)
-            .send()
-            .await?;
+        let send = || {
+            self.client
+                .post(format!("{}{path}", self.base_url))
+                .timeout(Duration::from_secs(5))
+                .json(&body)
+                .send()
+        };
+        let response = match send().await {
+            Ok(response) => response,
+            Err(error) if error.is_request() || error.is_connect() => send().await?,
+            Err(error) => return Err(error.into()),
+        };
         let status = response.status();
         let bytes = bounded_response(response, MAX_PROTOCOL_BODY_BYTES).await?;
         if !status.is_success() {
@@ -662,22 +685,20 @@ impl LlamaClient {
                 "conversation exceeds text limit".into(),
             ));
         }
-        // Rendering and tokenising the whole conversation costs two round trips to the server,
-        // and both grow with it: the tokenizer answers with a JSON array holding every token id.
-        // Measured in a live session, that became most of the wait before a reply started -
-        // about a second at forty turns, still climbing. The exact count only decides anything
-        // near the limit, so estimate first, deliberately high, and pay for certainty only when
-        // the estimate says it might matter.
-        const CHARS_PER_TOKEN: usize = 3;
-        const PER_MESSAGE_TEMPLATE_TOKENS: usize = 8;
-        let estimate: usize = fitted
-            .iter()
-            .map(|(_, text)| text.len() / CHARS_PER_TOKEN + PER_MESSAGE_TEMPLATE_TOKENS)
-            .sum();
-        if estimate < limit * 3 / 4 {
-            return Ok(fitted);
-        }
-
+        // Counted by the tokenizer that will actually read this, every time, rather than
+        // estimated from the length of the text.
+        //
+        // There used to be a character-count estimate here that skipped the real count whenever
+        // it looked comfortably small. Characters per token is not a constant: it depends on the
+        // script and on the content. Three bytes of Devanagari or CJK is one character, digits
+        // and identifiers tokenise far denser than prose, and the estimate was a single divisor
+        // for all of it. Whenever it read low the conversation went to the server over budget,
+        // and what that costs is the oldest turns being dropped by the server instead of by the
+        // rule here - silently, and differently depending on what language someone spoke.
+        //
+        // The reason it existed was cost: two round trips, one of which answers with a JSON
+        // array holding every token id. That is worth paying on every turn rather than being
+        // wrong about the budget in the cases hardest to notice.
         loop {
             let wire: Vec<_> = fitted
                 .iter()
@@ -745,15 +766,7 @@ impl LlamaClient {
             .or_else(|| raw.get("n_ctx"))
             .and_then(Value::as_u64)
             .and_then(|value| usize::try_from(value).ok());
-        let model_path = raw
-            .get("model_path")
-            .or_else(|| raw.get("model"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        Ok(ServerProperties {
-            model_path,
-            per_slot_context,
-        })
+        Ok(ServerProperties { per_slot_context })
     }
 
     pub async fn slots(&self) -> Result<Vec<NativeSlotStatus>, EngineError> {
@@ -762,28 +775,6 @@ impl LlamaClient {
             .as_array()
             .ok_or_else(|| EngineError::Protocol("/slots did not return an array".into()))?;
         entries.iter().cloned().map(parse_slot).collect()
-    }
-
-    /// Streams a chat completion, sending each token as it arrives.
-    ///
-    /// `messages` are (role, content) pairs. Tokens go out through `sender` so the caller can
-    /// start speaking the first phrase while the rest is still being generated - the difference
-    /// between audio at 700 ms and audio when the whole reply is finished.
-    ///
-    /// Returns the full text. A closed channel ends generation early, which is how an
-    /// interruption stops the model rather than letting it run to completion unheard.
-    pub async fn stream_completion(
-        &self,
-        kind: SlotKind,
-        messages: &[(&str, String)],
-        max_tokens: usize,
-        temperature: f32,
-        sender: std::sync::mpsc::Sender<String>,
-    ) -> Result<Completion, EngineError> {
-        self.stream_completion_with(kind, messages, max_tokens, temperature, move |token| {
-            sender.send(token).is_ok()
-        })
-        .await
     }
 
     /// Runs token delivery and completion on the same task, preserving their order.
@@ -855,87 +846,6 @@ impl LlamaClient {
             text: full,
             truncated: decoder.truncated,
         })
-    }
-    /// Streams one completion and measures it.
-    ///
-    /// `id_slot` pins the request to a specific slot so the caller controls which KV cache is
-    /// touched; without it llama-server picks a slot itself and the two policies blur together.
-    pub async fn measured_completion(
-        &self,
-        kind: SlotKind,
-        prompt: &str,
-        max_tokens: usize,
-    ) -> Result<GenerationMetrics, EngineError> {
-        let body = json!({
-            "model": self.model_alias,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": true,
-            "stream_options": {"include_usage": true},
-            "timings_per_token": true,
-            "max_tokens": max_tokens,
-            "temperature": 0.7,
-            "top_p": 0.95,
-            "id_slot": kind.slot().index(),
-            "cache_prompt": true,
-            // Redundant with the server's `--reasoning off`, kept so a request is still correct
-            // if it is ever replayed against a server launched without that flag.
-            "chat_template_kwargs": {"enable_thinking": false},
-        });
-        let bytes = serde_json::to_vec(&body)?;
-        if bytes.len() > MAX_PROTOCOL_BODY_BYTES {
-            return Err(EngineError::InvalidConfig(
-                "chat request exceeded the 8 MiB protocol limit".into(),
-            ));
-        }
-
-        let started = Instant::now();
-        let response = self
-            .client
-            .post(format!("{}/v1/chat/completions", self.base_url))
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(bytes)
-            .send()
-            .await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let bytes = bounded_response(response, MAX_PROTOCOL_BODY_BYTES).await?;
-            return Err(EngineError::Protocol(format!(
-                "chat completion returned HTTP {status}: {}",
-                bounded_text(&bytes, 4_096)
-            )));
-        }
-
-        let mut metrics = GenerationMetrics::default();
-        let mut buffer = Vec::new();
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk) = stream.next().await {
-            buffer.extend_from_slice(&chunk?);
-            if buffer.len() > MAX_PROTOCOL_BODY_BYTES {
-                return Err(EngineError::Protocol(
-                    "SSE buffer exceeded the protocol limit".into(),
-                ));
-            }
-            // SSE events are newline-delimited; hold the trailing partial line for the next chunk.
-            while let Some(position) = buffer.iter().position(|byte| *byte == b'\n') {
-                let line = buffer.drain(..=position).collect::<Vec<_>>();
-                let line = String::from_utf8_lossy(&line);
-                let Some(payload) = line.trim().strip_prefix("data:") else {
-                    continue;
-                };
-                let payload = payload.trim();
-                if payload.is_empty() || payload == "[DONE]" {
-                    continue;
-                }
-                let Ok(event) = serde_json::from_str::<Value>(payload) else {
-                    continue;
-                };
-                apply_event(&mut metrics, &event, started);
-            }
-        }
-
-        metrics.wall_time = started.elapsed();
-        Ok(metrics)
     }
 }
 
@@ -1055,61 +965,6 @@ impl CompletionDecoder {
     }
 }
 
-fn apply_event(metrics: &mut GenerationMetrics, event: &Value, started: Instant) {
-    let delta = event
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("delta"));
-
-    for (key, sink) in [
-        ("content", &mut metrics.content),
-        ("reasoning_content", &mut metrics.reasoning),
-    ] {
-        let Some(text) = delta
-            .and_then(|delta| delta.get(key))
-            .and_then(Value::as_str)
-        else {
-            continue;
-        };
-        if text.is_empty() {
-            continue;
-        }
-        // First *token-bearing* delta, not first SSE frame: llama-server emits a role-only
-        // opening delta, and counting that as the first token would understate TTFT. Reasoning
-        // counts too - it is decode time the listener waits through either way.
-        metrics
-            .time_to_first_token
-            .get_or_insert_with(|| started.elapsed());
-        sink.push_str(text);
-    }
-
-    // llama-server reports final timings on the closing frame, under `timings` at the top level
-    // and (depending on build) mirrored into `usage`.
-    let timings = event
-        .get("timings")
-        .or_else(|| event.get("usage").and_then(|usage| usage.get("timings")));
-    if let Some(timings) = timings {
-        let read_u64 = |key: &str| timings.get(key).and_then(Value::as_u64);
-        let read_f64 = |key: &str| timings.get(key).and_then(Value::as_f64);
-        metrics.prompt_tokens = read_u64("prompt_n").or(metrics.prompt_tokens);
-        metrics.prompt_ms = read_f64("prompt_ms").or(metrics.prompt_ms);
-        metrics.predicted_tokens = read_u64("predicted_n").or(metrics.predicted_tokens);
-        metrics.predicted_ms = read_f64("predicted_ms").or(metrics.predicted_ms);
-        metrics.draft_tokens = read_u64("draft_n").or(metrics.draft_tokens);
-        metrics.draft_accepted = read_u64("draft_n_accepted").or(metrics.draft_accepted);
-    }
-
-    if let Some(usage) = event.get("usage") {
-        if metrics.prompt_tokens.is_none() {
-            metrics.prompt_tokens = usage.get("prompt_tokens").and_then(Value::as_u64);
-        }
-        if metrics.predicted_tokens.is_none() {
-            metrics.predicted_tokens = usage.get("completion_tokens").and_then(Value::as_u64);
-        }
-    }
-}
-
 fn parse_slot(value: Value) -> Result<NativeSlotStatus, EngineError> {
     let id = value
         .get("id_slot")
@@ -1129,10 +984,6 @@ fn parse_slot(value: Value) -> Result<NativeSlotStatus, EngineError> {
     Ok(NativeSlotStatus {
         slot,
         context_capacity,
-        is_processing: value
-            .get("is_processing")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
     })
 }
 
@@ -1150,16 +1001,6 @@ fn bounded_text(bytes: &[u8], limit: usize) -> String {
 // ============================================================================================
 // Runtime
 // ============================================================================================
-
-/// What the server looked like once it came up.
-#[derive(Debug, Clone)]
-pub struct StartReport {
-    pub pid: u32,
-    pub startup: Duration,
-    pub slots: Vec<NativeSlotStatus>,
-    pub per_slot_context: Option<usize>,
-    pub model_path: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct LlamaEngine {
@@ -1188,12 +1029,9 @@ impl LlamaEngine {
         &self.client
     }
 
-    pub fn process(&self) -> &ProcessOwner {
-        &self.process
-    }
-
-    /// Spawns the server and blocks until it answers, or explains why it never did.
-    pub async fn start(&self) -> Result<StartReport, EngineError> {
+    /// Spawns the server and waits until it answers with the shape this runtime asked for, or
+    /// explains why it never did.
+    pub async fn start(&self) -> Result<(), EngineError> {
         // Refuse to adopt a server this runtime does not own: it may be running an entirely
         // different model or context size, and every measurement taken against it would be a
         // quiet lie.
@@ -1202,55 +1040,64 @@ impl LlamaEngine {
         }
 
         let started = Instant::now();
-        let pid = self.process.spawn().await?;
+        self.process.spawn().await?;
 
         loop {
             if self.client.healthy().await {
                 break;
             }
             if !self.process.is_alive().await? {
-                return Err(EngineError::Protocol(format!(
-                    "llama-server exited during startup. Recent errors:\n{}",
-                    self.failure_detail()
-                )));
+                return Err(EngineError::Protocol(
+                    self.failure("the model server stopped while starting")
+                        .await,
+                ));
             }
             if started.elapsed() > self.config.startup_timeout {
                 let _ = self.process.terminate().await;
-                return Err(EngineError::Timeout(format!(
-                    "llama-server did not become healthy within {:?}. Recent errors:\n{}",
-                    self.config.startup_timeout,
-                    self.failure_detail()
-                )));
+                return Err(EngineError::Timeout(
+                    self.failure(&format!(
+                        "the model server was not ready within {} s",
+                        self.config.startup_timeout.as_secs()
+                    ))
+                    .await,
+                ));
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
+        self.process.started();
 
-        let startup = started.elapsed();
-        let properties = self.client.properties().await?;
         let slots = self.client.slots().await?;
-
         if slots.len() != PARALLEL_SLOTS {
             return Err(EngineError::Protocol(format!(
                 "expected {PARALLEL_SLOTS} slots but llama-server reported {}",
                 slots.len()
             )));
         }
-
-        Ok(StartReport {
-            pid,
-            startup,
-            slots,
-            per_slot_context: properties.per_slot_context,
-            model_path: properties.model_path,
-        })
+        // The conversation is fitted to the window this runtime asked for. A server that quietly
+        // gave each slot less would truncate replies on its own terms instead.
+        let window = self.client.properties().await?.per_slot_context;
+        if window.is_some_and(|tokens| tokens != self.config.tokens_per_slot) {
+            return Err(EngineError::Protocol(format!(
+                "llama-server gave each slot {} tokens instead of {}",
+                window.unwrap_or_default(),
+                self.config.tokens_per_slot
+            )));
+        }
+        Ok(())
     }
 
     pub async fn stop(&self) -> Result<bool, EngineError> {
         self.process.terminate().await
     }
 
-    fn failure_detail(&self) -> &'static str {
-        "native output is disabled; verify model assets and available graphics memory"
+    /// A startup failure, with the server's own last word on it when it gave one.
+    async fn failure(&self, what: &str) -> String {
+        match self.process.startup_failure().await {
+            Some(reason) => format!("{what}: {reason}"),
+            None => {
+                format!("{what} without saying why; check the model files and free graphics memory")
+            }
+        }
     }
 }
 
@@ -1356,13 +1203,17 @@ mod tests {
         let mut config = config();
         config.port = listener.local_addr().unwrap().port();
         let server = tokio::spawn(async move {
-            // A short conversation is well under the limit, so it goes straight to the model:
-            // no template rendering and no tokenising, which is the point of the estimate.
-            for (path, mime, body) in [(
-                "/v1/chat/completions",
-                "text/event-stream",
-                "data: {\"choices\":[{\"delta\":{\"content\":\"Hello.\"}}]}\n\ndata: [DONE]\n\n",
-            )] {
+            // Every conversation is rendered and counted before it is sent, however short it
+            // looks, so the exchange is template, tokenize, then the completion itself.
+            for (path, mime, body) in [
+                ("/apply-template", "application/json", "{\"prompt\":\"hi\"}"),
+                ("/tokenize", "application/json", "{\"tokens\":[1,2,3,4]}"),
+                (
+                    "/v1/chat/completions",
+                    "text/event-stream",
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hello.\"}}]}\n\ndata: [DONE]\n\n",
+                ),
+            ] {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = vec![0; 16384];
                 let n = socket.read(&mut request).await.unwrap();
@@ -1423,14 +1274,6 @@ mod tests {
         for kind in SlotKind::ALL {
             assert_eq!(kind.slot().kind(), kind, "{kind:?} must round-trip");
         }
-    }
-
-    #[test]
-    fn the_two_slots_run_opposite_kv_policies() {
-        assert_eq!(SlotKind::Filter.kv_policy(), KvPolicy::PerRequest);
-        assert_eq!(SlotKind::Talker.kv_policy(), KvPolicy::StablePrefix);
-        assert!(SlotKind::Talker.kv_policy().prefix_stability_matters());
-        assert!(!SlotKind::Filter.kv_policy().prefix_stability_matters());
     }
 
     #[test]
@@ -1577,96 +1420,33 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_startup_is_explained_by_its_last_error_and_nothing_is_kept_after() {
+        let mut log = StartupLog::default();
+        assert_eq!(log.reason(), None);
+        log.push("load_backend: loaded CUDA backend");
+        log.push("   ");
+        assert_eq!(log.reason(), Some("load_backend: loaded CUDA backend"));
+        log.push("ggml_cuda_host_malloc: failed to allocate 512.00 MiB of pinned memory: out of memory\r\n");
+        log.push("main: exiting due to model loading error");
+        assert_eq!(
+            log.reason(),
+            Some("main: exiting due to model loading error")
+        );
+        for n in 0..50 {
+            log.push(&format!("line {n} {}", "x".repeat(500)));
+        }
+        assert_eq!(log.lines.len(), StartupLog::LINES);
+        assert!(log
+            .lines
+            .iter()
+            .all(|l| l.chars().count() <= StartupLog::LINE_CHARS));
+        log.close();
+        log.push("error: something about a request");
+        assert_eq!(log.reason(), None, "a running server's output is not kept");
+    }
+
+    #[test]
     fn a_slot_without_a_context_capacity_is_a_protocol_error() {
         assert!(parse_slot(json!({"id_slot": 0})).is_err());
-    }
-
-    #[test]
-    fn first_content_token_sets_ttft_but_an_empty_role_delta_does_not() {
-        let started = Instant::now();
-        let mut metrics = GenerationMetrics::default();
-        apply_event(
-            &mut metrics,
-            &json!({"choices": [{"delta": {"role": "assistant", "content": ""}}]}),
-            started,
-        );
-        assert!(metrics.time_to_first_token.is_none());
-        apply_event(
-            &mut metrics,
-            &json!({"choices": [{"delta": {"content": "hi"}}]}),
-            started,
-        );
-        assert!(metrics.time_to_first_token.is_some());
-        assert_eq!(metrics.content, "hi");
-    }
-
-    #[test]
-    fn reasoning_only_output_still_registers_as_tokens_received() {
-        // A reasoning model can spend the whole budget in reasoning_content and leave content
-        // empty. Reporting that as "no tokens received" sent us chasing a decode bug that was
-        // really just thinking being enabled.
-        let mut metrics = GenerationMetrics::default();
-        apply_event(
-            &mut metrics,
-            &json!({"choices": [{"delta": {"reasoning_content": "hmm"}}]}),
-            Instant::now(),
-        );
-        assert!(metrics.time_to_first_token.is_some());
-        assert_eq!(metrics.reasoning, "hmm");
-        assert!(metrics.content.is_empty());
-    }
-
-    #[test]
-    fn content_and_reasoning_accumulate_into_separate_buffers() {
-        let mut metrics = GenerationMetrics::default();
-        apply_event(
-            &mut metrics,
-            &json!({"choices": [{"delta": {"reasoning_content": "think", "content": "say"}}]}),
-            Instant::now(),
-        );
-        assert_eq!(metrics.reasoning, "think");
-        assert_eq!(metrics.content, "say");
-    }
-
-    #[test]
-    fn draft_acceptance_is_computed_from_reported_timings() {
-        let mut metrics = GenerationMetrics::default();
-        apply_event(
-            &mut metrics,
-            &json!({"timings": {"draft_n": 100, "draft_n_accepted": 37}}),
-            Instant::now(),
-        );
-        let rate = metrics.draft_acceptance_rate().expect("rate");
-        assert!((rate - 0.37).abs() < 1e-9);
-    }
-
-    #[test]
-    fn acceptance_rate_is_absent_rather_than_zero_when_mtp_is_off() {
-        // Reporting 0% for a run with no draft model would read as "MTP is failing" instead of
-        // "MTP was never enabled".
-        let metrics = GenerationMetrics::default();
-        assert!(metrics.draft_acceptance_rate().is_none());
-    }
-
-    #[test]
-    fn decode_rate_is_derived_from_predicted_tokens_and_time() {
-        let mut metrics = GenerationMetrics::default();
-        apply_event(
-            &mut metrics,
-            &json!({"timings": {"predicted_n": 50, "predicted_ms": 1000.0}}),
-            Instant::now(),
-        );
-        assert_eq!(metrics.decode_tokens_per_second(), Some(50.0));
-    }
-
-    #[test]
-    fn a_zero_duration_does_not_produce_an_infinite_rate() {
-        let mut metrics = GenerationMetrics::default();
-        apply_event(
-            &mut metrics,
-            &json!({"timings": {"predicted_n": 50, "predicted_ms": 0.0}}),
-            Instant::now(),
-        );
-        assert_eq!(metrics.decode_tokens_per_second(), None);
     }
 }

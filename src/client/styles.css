@@ -2,31 +2,99 @@
   font-family: Inter; src: url('/inter.woff2') format('woff2');
   font-weight: 100 900; font-style: normal; font-display: swap;
 }
+/* Newsreader, for what Zen says in the conversation: shipped with the app, so it never loads from
+   the internet and never falls back. Two parts, as Google Fonts cuts it - English, and the accented
+   letters of names - each loaded only when a character of its own appears. SIL Open Font License;
+   see newsreader-LICENSE.txt. */
+@font-face {
+  font-family: Newsreader; src: url('/newsreader-latin.woff2') format('woff2');
+  font-weight: 300 600; font-style: normal; font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: Newsreader; src: url('/newsreader-latin-ext.woff2') format('woff2');
+  font-weight: 300 600; font-style: normal; font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ================================================================ tokens */
 :root {
   color-scheme: light dark;
   font-family: Inter, 'Segoe UI', sans-serif;
   --bg: #f6f6f9; --surface: #ffffff; --sunken: #f3f3f7;
   --ink: #22232d; --muted: #626373; --soft: #757687;
-  --accent: #5a51c7; --accent-wash: #e9e7fa; --positive: #36745a;
-  --line: #e3e3ec; --error: #b23b44; --shadow: 0 12px 48px #25233d08;
+  --accent: #5a51c7; --accent-wash: #e9e7fa; --on-accent: #ffffff;
+  --line: #e3e3ec; --error: #b23b44; --on-error: #ffffff;
+  --accent-ink: #4a42ad; --hairline: rgba(0, 0, 0, .08);
   --ease-out: cubic-bezier(.25,.46,.45,.94); --duration-slow: 560ms;
+  /* Zen's words in the conversation, set as something said rather than something typed. */
+  --voice: Newsreader, Georgia, serif;
+  /* The state colours, from the orb's own palette. Dark enough in the light theme for small text
+     on the chip (4.5:1 or better). */
+  --listen-ink: #0a6a63; --think-ink: #5b43c8; --speak-ink: #b0266a;
+  /* Frosted glass - pearl in the light, gunmetal in the dark - and the wells cut into it. */
+  --glass: linear-gradient(180deg, rgba(255, 255, 255, .7), rgba(250, 250, 253, .62));
+  --glass-edge: rgba(22, 22, 50, .08);
+  --glass-shadow: inset 0 1px 0 #fff, 0 36px 70px -28px rgba(34, 32, 70, .28), 0 12px 26px -14px rgba(34, 32, 70, .16);
+  --ice: linear-gradient(180deg, rgba(255, 255, 255, .64), rgba(246, 247, 255, .46)); --ice-edge: rgba(22, 22, 50, .07);
+  --ice-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 14px 34px -22px rgba(34, 32, 70, .3);
+  --grain: .22; --spill: 17%;
+  --well: rgba(236, 236, 245, .72); --well-edge: rgba(22, 22, 50, .06); --well-shadow: inset 0 1px 2px rgba(20, 20, 40, .05);
+  --sheet-glass: rgba(248, 248, 251, .8); --sheet-group: rgba(255, 255, 255, .78);
+  --sheet-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(22, 22, 50, .07), 0 40px 90px rgba(30, 30, 60, .22);
+  --raised: #ffffff; --raised-shadow: 0 1px 2px rgba(20, 20, 40, .08), inset 0 0 0 1px rgba(20, 20, 40, .08);
+  --divider: var(--line);
+  /* The microphone key while it is on: a pale matte key in the light, gunmetal in the dark. */
+  --key-on: #f7f7fa; --key-on-base: rgba(22, 22, 48, .14); --key-on-edge: rgba(255, 255, 255, .9); --key-on-drop: rgba(22, 22, 48, .22);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #111218; --surface: #1a1b24; --sunken: #22232d;
     --ink: #eeedf4; --muted: #b2b1c3; --soft: #a09fb2;
-    --accent: #b3aaff; --accent-wash: #302b4c; --positive: #88cbb0;
-    --line: #30313d; --error: #ff9ca6; --shadow: 0 12px 48px #0002;
+    --accent: #b3aaff; --accent-wash: #302b4c; --on-accent: #15141f;
+    --line: #30313d; --error: #ff9ca6; --on-error: #2a0d12;
+    --accent-ink: #c9c3ff; --hairline: rgba(255, 255, 255, .08);
+    --listen-ink: #5fe3d4; --think-ink: #c4b3ff; --speak-ink: #ff8cc8;
+    --glass: linear-gradient(180deg, rgba(46, 48, 64, .42), rgba(24, 25, 36, .52));
+    --glass-edge: rgba(255, 255, 255, .08);
+    --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 40px 80px -24px rgba(0, 0, 0, .7), 0 16px 32px -12px rgba(0, 0, 0, .5);
+    --ice: linear-gradient(180deg, rgba(214, 218, 255, .085), rgba(214, 218, 255, .04)); --ice-edge: rgba(255, 255, 255, .09);
+    --ice-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 16px 36px -20px rgba(0, 0, 0, .65);
+    --grain: .32; --spill: 28%;
+    --well: rgba(5, 6, 11, .46); --well-edge: rgba(255, 255, 255, .05); --well-shadow: inset 0 1px 3px rgba(0, 0, 0, .3);
+    --sheet-glass: linear-gradient(180deg, rgba(43, 46, 54, .82), rgba(31, 33, 40, .88)); --sheet-group: rgba(255, 255, 255, .045);
+    --sheet-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 0 0 1px rgba(255, 255, 255, .07), 0 40px 90px rgba(0, 0, 0, .55);
+    --raised: linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .055));
+    --raised-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), inset 0 0 0 1px rgba(255, 255, 255, .07);
+    --divider: rgba(255, 255, 255, .09);
+    --key-on: #3a3c4b; --key-on-base: rgba(0, 0, 0, .55); --key-on-edge: rgba(255, 255, 255, .08); --key-on-drop: rgba(0, 0, 0, .6);
   }
 }
 :root[data-theme="dark"] {
-    --bg: #111218; --surface: #1a1b24; --sunken: #22232d;
-    --ink: #eeedf4; --muted: #b2b1c3; --soft: #a09fb2;
-    --accent: #b3aaff; --accent-wash: #302b4c; --positive: #88cbb0;
-    --line: #30313d; --error: #ff9ca6; --shadow: 0 12px 48px #0002;
+  --bg: #111218; --surface: #1a1b24; --sunken: #22232d;
+  --ink: #eeedf4; --muted: #b2b1c3; --soft: #a09fb2;
+  --accent: #b3aaff; --accent-wash: #302b4c; --on-accent: #15141f;
+  --line: #30313d; --error: #ff9ca6; --on-error: #2a0d12;
+  --accent-ink: #c9c3ff; --hairline: rgba(255, 255, 255, .08);
+  --listen-ink: #5fe3d4; --think-ink: #c4b3ff; --speak-ink: #ff8cc8;
+  --glass: linear-gradient(180deg, rgba(46, 48, 64, .42), rgba(24, 25, 36, .52));
+  --glass-edge: rgba(255, 255, 255, .08);
+  --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 40px 80px -24px rgba(0, 0, 0, .7), 0 16px 32px -12px rgba(0, 0, 0, .5);
+  --ice: linear-gradient(180deg, rgba(214, 218, 255, .085), rgba(214, 218, 255, .04)); --ice-edge: rgba(255, 255, 255, .09);
+  --ice-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 16px 36px -20px rgba(0, 0, 0, .65);
+  --grain: .32; --spill: 28%;
+  --well: rgba(5, 6, 11, .46); --well-edge: rgba(255, 255, 255, .05); --well-shadow: inset 0 1px 3px rgba(0, 0, 0, .3);
+  --sheet-glass: linear-gradient(180deg, rgba(43, 46, 54, .82), rgba(31, 33, 40, .88)); --sheet-group: rgba(255, 255, 255, .045);
+  --sheet-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 0 0 1px rgba(255, 255, 255, .07), 0 40px 90px rgba(0, 0, 0, .55);
+  --raised: linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .055));
+  --raised-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), inset 0 0 0 1px rgba(255, 255, 255, .07);
+  --divider: rgba(255, 255, 255, .09);
+  --key-on: #3a3c4b; --key-on-base: rgba(0, 0, 0, .55); --key-on-edge: rgba(255, 255, 255, .08); --key-on-drop: rgba(0, 0, 0, .6);
 }
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
+
+/* ================================================================ base */
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html { -webkit-text-size-adjust: 100%; }
@@ -45,210 +113,477 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 .icon-library { position: absolute; width: 0; height: 0; overflow: hidden; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-.topbar { min-height: 84px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 36px; }
+input::placeholder, textarea::placeholder { color: var(--soft); opacity: 1; }
+@keyframes pulse { 50% { opacity: .3; } }
+@keyframes wave { 50% { transform: scaleY(1.7); opacity: .6; } }
+
+/* ================================================================ the sky
+   Deep space behind everything: a deep base; soft nebula in the orb's own colours, brightest
+   behind the orb as if it lit the cloud, breathing slowly; and three layers of stars (drawn by
+   sky.mjs) drifting past at different speeds, the far ones slowest, so the sky has depth - fewer
+   stars where the orb's light is. The light theme is a pearl sky with the same clouds in pastel
+   and soft motes of light. Everything moves by transform only; the clouds carry their own soft
+   fall-off rather than a live blur, which the GPU would re-apply on every frame. */
+.space { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; background: linear-gradient(180deg, #06070c, #090a12 55%, #0c0b17); }
+.space::before { content: ''; position: absolute; inset: -12%; animation: nebula-breathe 90s ease-in-out infinite alternate;
+  background:
+    radial-gradient(30% 36% at 27% 60%, rgba(104, 80, 230, .36), rgba(104, 80, 230, .216) 32%, rgba(104, 80, 230, .079) 56%, transparent 80%),
+    radial-gradient(22% 26% at 19% 74%, rgba(40, 170, 200, .2), rgba(40, 170, 200, .12) 32%, rgba(40, 170, 200, .044) 56%, transparent 80%),
+    radial-gradient(34% 26% at 60% 26%, rgba(150, 70, 200, .17), rgba(150, 70, 200, .102) 32%, rgba(150, 70, 200, .037) 56%, transparent 80%),
+    radial-gradient(44% 32% at 80% 78%, rgba(56, 80, 210, .18), rgba(56, 80, 210, .108) 32%, rgba(56, 80, 210, .04) 56%, transparent 80%),
+    radial-gradient(26% 20% at 42% 12%, rgba(80, 140, 235, .1), rgba(80, 140, 235, .06) 32%, rgba(80, 140, 235, .022) 56%, transparent 80%),
+    radial-gradient(18% 16% at 88% 18%, rgba(255, 120, 190, .08), rgba(255, 120, 190, .048) 32%, rgba(255, 120, 190, .018) 56%, transparent 80%); }
+@keyframes nebula-breathe { to { transform: translate(-2.5%, 1.5%) rotate(6deg) scale(1.08); } }
+.space .sky { position: absolute; inset: 0;
+  -webkit-mask-image: radial-gradient(26% 34% at 27% 60%, rgba(0, 0, 0, .25), #000 100%); mask-image: radial-gradient(26% 34% at 27% 60%, rgba(0, 0, 0, .25), #000 100%); }
+.space .layer { position: absolute; top: 0; left: 0; width: 200%; height: 100%; animation: sky-pan linear infinite; }
+.space .layer canvas { display: block; width: 100%; height: 100%; }
+.space .far { animation-duration: 480s; }
+.space .mid { animation-duration: 280s; }
+.space .near { animation-duration: 170s; }
+@keyframes sky-pan { to { transform: translateX(-50%); } }
+@media (max-width: 760px) {
+  .space::before { background:
+    radial-gradient(60% 30% at 50% 30%, rgba(104, 80, 230, .36), rgba(104, 80, 230, .216) 32%, rgba(104, 80, 230, .079) 56%, transparent 80%),
+    radial-gradient(40% 20% at 30% 40%, rgba(40, 170, 200, .18), rgba(40, 170, 200, .108) 32%, rgba(40, 170, 200, .04) 56%, transparent 80%),
+    radial-gradient(60% 30% at 70% 80%, rgba(56, 80, 210, .18), rgba(56, 80, 210, .108) 32%, rgba(56, 80, 210, .04) 56%, transparent 80%); }
+  .space .sky { -webkit-mask-image: radial-gradient(40% 20% at 50% 30%, rgba(0, 0, 0, .25), #000 100%); mask-image: radial-gradient(40% 20% at 50% 30%, rgba(0, 0, 0, .25), #000 100%); }
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .space { background: linear-gradient(180deg, #f8f7fd, #f1effa 55%, #eae6f7); }
+  :root:not([data-theme="dark"]) .space::before { background:
+    radial-gradient(30% 36% at 27% 60%, rgba(150, 125, 255, .36), rgba(150, 125, 255, .216) 32%, rgba(150, 125, 255, .079) 56%, transparent 80%),
+    radial-gradient(22% 26% at 19% 76%, rgba(100, 195, 255, .32), rgba(100, 195, 255, .192) 32%, rgba(100, 195, 255, .07) 56%, transparent 80%),
+    radial-gradient(34% 26% at 60% 24%, rgba(255, 150, 210, .24), rgba(255, 150, 210, .144) 32%, rgba(255, 150, 210, .053) 56%, transparent 80%),
+    radial-gradient(44% 32% at 80% 78%, rgba(125, 140, 255, .24), rgba(125, 140, 255, .144) 32%, rgba(125, 140, 255, .053) 56%, transparent 80%),
+    radial-gradient(26% 20% at 40% 10%, rgba(255, 205, 165, .22), rgba(255, 205, 165, .132) 32%, rgba(255, 205, 165, .048) 56%, transparent 80%),
+    radial-gradient(18% 16% at 88% 18%, rgba(205, 160, 255, .24), rgba(205, 160, 255, .144) 32%, rgba(205, 160, 255, .053) 56%, transparent 80%); }
+}
+:root[data-theme="light"] .space { background: linear-gradient(180deg, #f8f7fd, #f1effa 55%, #eae6f7); }
+:root[data-theme="light"] .space::before { background:
+    radial-gradient(30% 36% at 27% 60%, rgba(150, 125, 255, .36), rgba(150, 125, 255, .216) 32%, rgba(150, 125, 255, .079) 56%, transparent 80%),
+    radial-gradient(22% 26% at 19% 76%, rgba(100, 195, 255, .32), rgba(100, 195, 255, .192) 32%, rgba(100, 195, 255, .07) 56%, transparent 80%),
+    radial-gradient(34% 26% at 60% 24%, rgba(255, 150, 210, .24), rgba(255, 150, 210, .144) 32%, rgba(255, 150, 210, .053) 56%, transparent 80%),
+    radial-gradient(44% 32% at 80% 78%, rgba(125, 140, 255, .24), rgba(125, 140, 255, .144) 32%, rgba(125, 140, 255, .053) 56%, transparent 80%),
+    radial-gradient(26% 20% at 40% 10%, rgba(255, 205, 165, .22), rgba(255, 205, 165, .132) 32%, rgba(255, 205, 165, .048) 56%, transparent 80%),
+    radial-gradient(18% 16% at 88% 18%, rgba(205, 160, 255, .24), rgba(205, 160, 255, .144) 32%, rgba(205, 160, 255, .053) 56%, transparent 80%); }
+@media (max-width: 760px) and (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .space::before { background:
+    radial-gradient(60% 30% at 50% 30%, rgba(150, 125, 255, .36), rgba(150, 125, 255, .216) 32%, rgba(150, 125, 255, .079) 56%, transparent 80%),
+    radial-gradient(40% 20% at 28% 42%, rgba(100, 195, 255, .3), rgba(100, 195, 255, .18) 32%, rgba(100, 195, 255, .066) 56%, transparent 80%),
+    radial-gradient(50% 24% at 72% 12%, rgba(255, 150, 210, .22), rgba(255, 150, 210, .132) 32%, rgba(255, 150, 210, .048) 56%, transparent 80%),
+    radial-gradient(60% 30% at 70% 82%, rgba(125, 140, 255, .24), rgba(125, 140, 255, .144) 32%, rgba(125, 140, 255, .053) 56%, transparent 80%); }
+}
+@media (max-width: 760px) {
+  :root[data-theme="light"] .space::before { background:
+    radial-gradient(60% 30% at 50% 30%, rgba(150, 125, 255, .36), rgba(150, 125, 255, .216) 32%, rgba(150, 125, 255, .079) 56%, transparent 80%),
+    radial-gradient(40% 20% at 28% 42%, rgba(100, 195, 255, .3), rgba(100, 195, 255, .18) 32%, rgba(100, 195, 255, .066) 56%, transparent 80%),
+    radial-gradient(50% 24% at 72% 12%, rgba(255, 150, 210, .22), rgba(255, 150, 210, .132) 32%, rgba(255, 150, 210, .048) 56%, transparent 80%),
+    radial-gradient(60% 30% at 70% 82%, rgba(125, 140, 255, .24), rgba(125, 140, 255, .144) 32%, rgba(125, 140, 255, .053) 56%, transparent 80%); }
+}
+
+/* ================================================================ the top bar
+   A pane of frosted ice laid over the sky, its edges on the page's own column so it lines up
+   with the hero and the card under it. The developer's name sits quietly beside the logo; the
+   date and time beside Settings. The frost is on the bar itself, not a layer inside it: while
+   the bar lands, its fading makes it the backdrop for anything within it, and a pane inside
+   would blur nothing until the landing ended and then snap into frost. */
+.topbar { --column: 1160px; --edge: 40px; position: relative; z-index: 1; min-height: 60px; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  width: calc(min(100%, var(--column)) - 2 * var(--edge)); margin: 12px auto; padding: 8px 8px 8px 18px; border: 1px solid var(--ice-edge); border-radius: 18px;
+  background: var(--ice); -webkit-backdrop-filter: blur(24px) saturate(1.6); backdrop-filter: blur(24px) saturate(1.6); box-shadow: var(--ice-shadow); }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-mark { width: 28px; height: 28px; color: var(--accent); stroke: none; }
 .brand-name { font-size: 28px; letter-spacing: -.07em; font-weight: 600; }
-.brand-tagline { color: var(--soft); font-size: 12px; margin-left: 10px; }
+.brand-by { align-self: center; margin-left: 2px; padding-left: 10px; border-left: 1px solid color-mix(in srgb, var(--ink) 16%, transparent);
+  font-size: 12px; font-weight: 500; line-height: 16px; color: var(--muted); white-space: nowrap; }
 .header-actions { display: flex; gap: 8px; align-items: center; }
-.status-chip { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; color: var(--muted); font-size: 11px; border-radius: 20px; background: var(--surface); border: 1px solid var(--line); }
-.status-dot, .state-dot, .eyebrow-dot, .privacy-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--soft); flex-shrink: 0; }
-.connected .status-dot, .privacy-dot { background: var(--positive); }
+.topbar-time { margin-right: 4px; font-size: 13px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; background: transparent; border: 1px solid transparent; border-radius: 12px; color: var(--muted); flex-shrink: 0; }
 .icon-button:hover:not(:disabled) { background: var(--accent-wash); color: var(--accent); }
-.icon-button[aria-pressed='false'] { opacity: .55; }
-.icon-button[aria-expanded='true'] { color: var(--accent); background: var(--accent-wash); }
 .end-session:hover:not(:disabled) { color: var(--error); }
-.stage { width: min(100%, 1160px); margin: auto; padding: 30px 40px 36px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .95fr); align-items: center; gap: clamp(24px, 4vw, 64px); }
+
+/* ================================================================ the intro
+   The opening of Zen's teaser, played live with its own sound, finished the way a brand closes an
+   advert: on plain black the crescent rises alone in the middle as the bells ring (0.2-1.0 s), then
+   glides left as the name comes into focus beside it (1.1-2.0 s), and the two stand on one line,
+   centred. Nothing is measured: the name's box opens from nothing to its own width, and the row,
+   centred as a whole, carries the moon across as it grows. The name is not clipped to that box -
+   its moving edge was a hard vertical cut through the letters - but revealed through a wide soft
+   edge as it sharpens from a blur. Held, then gone by 2.9 s as the page lands beneath it - the
+   bar, the orb, the card, the starters. Once per launch; a click or a key skips it. In the light
+   theme it is the same scene in white. With reduced motion it does not play, and makes no sound,
+   because every rule here is an animation and the page underneath is already in its final state. */
+.intro { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+  padding: 24px; background: #000; color: #f5f5f7;
+  opacity: 0; visibility: hidden; pointer-events: none; animation: intro-veil 2.9s cubic-bezier(.25, .1, .25, 1) backwards; }
+@keyframes intro-veil {
+  0%, 83% { opacity: 1; visibility: visible; pointer-events: auto; }
+  100% { opacity: 0; visibility: hidden; pointer-events: none; } }
+.intro-lockup { display: flex; align-items: center; }
+/* The crescent fills about three quarters of its box, so the box is sized for the crescent to stand
+   as tall as the name's capitals. */
+.intro-mark { flex: none; width: clamp(72px, 13vmin, 144px); height: clamp(72px, 13vmin, 144px); stroke: none;
+  animation: intro-rise .8s cubic-bezier(.25, .1, .25, 1) .2s backwards; }
+@keyframes intro-rise { from { opacity: 0; transform: translateY(12px); } }
+.intro-word { display: block; margin-left: clamp(14px, 2.8vmin, 30px); interpolate-size: allow-keywords;
+  animation: intro-open .8s cubic-bezier(.65, 0, .35, 1) 1.1s backwards; }
+@keyframes intro-open { from { width: 0; margin-left: 0; } }
+/* The reveal is a mask three times the name's width - opaque, a soft ramp, clear - slid from its
+   clear end to its opaque end, so the ramp sweeps across the letters. At rest it is fully opaque. */
+.intro-title { display: block; padding-right: .04em; font-size: clamp(64px, 12vmin, 132px); font-weight: 600; letter-spacing: -.035em; line-height: 1.05; white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, #000 42%, transparent 58%); mask-image: linear-gradient(90deg, #000 42%, transparent 58%);
+  -webkit-mask-size: 300% 100%; mask-size: 300% 100%; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: 0 0; mask-position: 0 0;
+  animation: intro-reveal .9s cubic-bezier(.4, 0, .2, 1) 1.15s backwards; }
+@keyframes intro-reveal { from { opacity: 0; filter: blur(10px); transform: translateX(-.25em); -webkit-mask-position: 100% 0; mask-position: 100% 0; } }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .intro { background: #fff; color: #1d1d1f; } }
+:root[data-theme="light"] .intro { background: #fff; color: #1d1d1f; }
+.topbar, .hero, .console, .starters { animation: land .8s var(--ease-out) backwards; }
+.topbar { animation-delay: 2.5s; }
+.hero { animation-delay: 2.6s; }
+.console { animation-delay: 2.7s; }
+.starters { animation-delay: 2.8s; }
+@keyframes land { from { opacity: 0; transform: translateY(14px); } }
+body.landed .topbar, body.landed .hero, body.landed .console, body.landed .starters { animation: none; }
+
+/* ================================================================ the stage
+   The orb's column and the card end on one line - the chip's foot level with the card's bottom -
+   and the page keeps the starters' room at its foot, so the whole sits a little higher. */
+.stage { position: relative; z-index: 1; width: min(100%, 1160px); margin: auto; padding: 30px 40px 36px; display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, .95fr); align-items: center; gap: clamp(24px, 4vw, 64px); }
+@media (min-width: 761px) { .stage { align-items: end; padding-bottom: 96px; } }
 .hero { text-align: center; min-width: 0; }
-.eyebrow { display: flex; align-items: center; gap: 7px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; color: var(--muted); margin: 0 0 18px; }
-.hero .eyebrow { justify-content: center; }
+.eyebrow { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 0 0 18px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.eyebrow-dot, .state-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .eyebrow-dot { background: var(--accent); width: 5px; height: 5px; }
 h1 { font-size: clamp(32px, 4.2vw, 48px); line-height: 1.15; letter-spacing: -.055em; font-weight: 530; margin: 0; }
 h1 span { color: var(--muted); }
-.lede { font-size: 13px; color: var(--muted); line-height: 1.85; margin: 20px 0 0; }
 .hero-orb { width: min(100%, 360px); height: 285px; margin: 8px auto 0; }
-.orb-state { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); padding: 5px 0; min-height: 28px; }
-.state-dot { background: var(--accent); }
-.orb-state[data-phase='listening'] .state-dot { background: var(--positive); box-shadow: 0 0 0 4px color-mix(in srgb, var(--positive) 12%, transparent); }
-.orb-state[data-phase='loading'] .state-dot, .orb-state[data-phase='thinking'] .state-dot { animation: pulse 1.4s ease-in-out infinite; }
-.console { min-width: 0; padding: 26px; border: 1px solid var(--line); border-radius: 24px; background: var(--surface); box-shadow: var(--shadow); }
-.console-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-.console-heading .eyebrow { margin: 0; }
-.local-label { font-size: 9px; letter-spacing: .08em; color: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 2px 5px; white-space: nowrap; }
-.live-caption { min-height: 205px; max-height: 295px; overflow: auto; scrollbar-width: thin; padding: 38px 0 26px; overflow-wrap: anywhere; }
-.caption-speaker { margin: 0 0 14px; font-size: 11px; color: var(--soft); }
-.caption-text { font-size: clamp(20px, 2.6vw, 28px); line-height: 1.45; letter-spacing: -.035em; font-weight: 450; margin: 0; }
-.live-caption.partial .caption-text { color: var(--muted); }
+
+/* ================================================================ the orb */
+.orb-stage { width: 100%; height: 100%; position: relative; isolation: isolate; touch-action: pan-y;
+  transition: opacity var(--duration-slow) var(--ease-out), filter 1.2s ease; }
+.orb-stage canvas { width: 100%; height: 100%; display: block; position: relative; z-index: 2;
+  filter: drop-shadow(0 18px 22px rgba(39, 43, 62, 0.16)) drop-shadow(0 5px 10px rgba(39, 43, 62, 0.08)); }
+.orb-halo { position: absolute; inset: 14% 12% auto 12%; height: 66%; border-radius: 50%; background: radial-gradient(ellipse, var(--accent-wash), transparent 68%);
+  filter: blur(26px); opacity: 0.9; transition: opacity var(--duration-slow) var(--ease-out); }
+.orb-shadow { position: absolute; width: 46%; height: 6%; left: 27%; bottom: 4%; border-radius: 50%; background: rgba(60, 64, 92, 0.24); filter: blur(14px); transform: scaleY(0.55); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .orb-shadow { background: rgba(0, 0, 0, 0.6); }
+  :root:not([data-theme="light"]) .orb-stage canvas { filter: drop-shadow(0 18px 34px rgba(94, 92, 230, 0.22)); }
+}
+:root[data-theme="dark"] .orb-shadow { background: rgba(0, 0, 0, 0.6); }
+:root[data-theme="dark"] .orb-stage canvas { filter: drop-shadow(0 18px 34px rgba(94, 92, 230, 0.22)); }
+@keyframes breathe { 50% { transform: translateY(-6px) rotate(3deg); border-radius: 52% 48% 51% 49%; } }
+.orb-fallback { position: absolute; left: 19%; top: 11%; width: 62%; aspect-ratio: 1; border-radius: 48% 52% 49% 51%;
+  background:
+    radial-gradient(ellipse at 30% 18%, #fff 3%, #dce6f2 16%, transparent 32%),
+    radial-gradient(ellipse at 63% 73%, #cebedf 0%, #aac6dc 30%, #607b99 59%, #f1f2fa 70%);
+  box-shadow: inset -10px -8px 18px rgba(84, 88, 109, 0.2), inset 4px 6px 20px #fff; animation: breathe 7s var(--ease-out) infinite; }
+.orb-stage.webgl .orb-fallback { display: none; }
+/* Asleep, Zen rests rather than switching off: the orb keeps all its light and breathes, once every
+   5.5 s - about eleven breaths a minute, a resting rate - with the aurora swelling in step (below). */
+body[data-sleep] .orb-stage { animation: sleep-breathe 5.5s ease-in-out infinite; }
+@keyframes sleep-breathe { 50% { transform: scale(.985); } }
+
+/* The orb's aurora, after the light Apple draws around the screen's edge when Siri listens: a rim
+   of flowing colour tucked under the orb's edge, so light seems to spill out from behind it, and a
+   soft glow behind that. It lives while Zen does - listening, thinking, speaking - and rests when
+   the microphone is off and nothing is happening. Its colours lean toward the state's own (aqua
+   listening, lavender thinking, rose speaking) and ease from one to the next. The rim and the glow
+   answer the voice being heard (--b1..--b3, set by the page), and while Zen thinks a light runs
+   round the rim. Everything turns by transform, so the motion stays on the compositor. */
+@property --au1 { syntax: '<color>'; inherits: true; initial-value: rgba(120, 210, 255, .95); }
+@property --au2 { syntax: '<color>'; inherits: true; initial-value: rgba(165, 120, 255, .95); }
+@property --au3 { syntax: '<color>'; inherits: true; initial-value: rgba(255, 140, 200, .9); }
+body[data-phase="listening"] { --au1: rgba(95, 227, 212, .95); --au2: rgba(120, 210, 255, .95); --au3: rgba(165, 120, 255, .85); }
+body[data-phase="transcribing"], body[data-phase="thinking"], body[data-phase="preparing"] { --au1: rgba(165, 120, 255, .95); --au2: rgba(205, 188, 255, .95); --au3: rgba(120, 210, 255, .8); }
+body[data-phase="speaking"] { --au1: rgba(255, 140, 200, .95); --au2: rgba(165, 120, 255, .95); --au3: rgba(120, 210, 255, .85); }
+/* Asleep, a quiet moonlit aurora: lavender and pale blue, breathing with the orb, the rim still
+   turning slowly - ready the moment anything wakes it. It answers no voice while it rests. */
+body[data-sleep] { --au1: rgba(175, 165, 255, .9); --au2: rgba(125, 195, 255, .85); --au3: rgba(160, 230, 255, .75); }
+.orb-aurora { position: absolute; left: 50%; top: 50%; height: 118%; aspect-ratio: 1; translate: -50% -50%; pointer-events: none; opacity: 0;
+  transition: opacity .9s ease, --au1 .9s ease, --au2 .9s ease, --au3 .9s ease; }
+body[data-mic="on"] .orb-aurora, body[data-phase="transcribing"] .orb-aurora, body[data-phase="thinking"] .orb-aurora,
+body[data-phase="preparing"] .orb-aurora, body[data-phase="speaking"] .orb-aurora { opacity: 1; }
+body[data-sleep] .orb-aurora { opacity: .7; animation: rest-glow 5.5s ease-in-out infinite; }
+@keyframes rest-glow { 0%, 100% { opacity: .45; } 50% { opacity: .95; } }
+.orb-aurora > div, .orb-aurora i { position: absolute; inset: 0; border-radius: 50%; }
+.au-glow { opacity: calc(.3 + var(--b2, 0) * .55); transform: scale(calc(.97 + var(--b3, 0) * .08)); transition: opacity .15s linear, transform .15s linear;
+  -webkit-mask-image: radial-gradient(closest-side, transparent 62%, #000 70%, rgba(0, 0, 0, .45) 82%, transparent 100%);
+  mask-image: radial-gradient(closest-side, transparent 62%, #000 70%, rgba(0, 0, 0, .45) 82%, transparent 100%); }
+.au-glow i { filter: blur(16px); background: conic-gradient(from 0deg, var(--au1), transparent 22%, var(--au2) 42%, transparent 62%, var(--au3) 80%, var(--au1));
+  animation: au-turn 16s linear infinite, au-breathe 5s ease-in-out infinite; }
+.au-glow i + i { background: conic-gradient(from 120deg, var(--au3), transparent 30%, var(--au1) 55%, transparent 78%, var(--au3));
+  animation: au-turn 23s linear infinite reverse, au-breathe 7s ease-in-out -2s infinite; }
+.au-rim { opacity: calc(.5 + var(--b1, 0) * .5); transform: scale(calc(1 + var(--b2, 0) * .035)); transition: opacity .12s linear, transform .12s linear;
+  -webkit-mask-image: radial-gradient(closest-side, transparent 60%, #000 65%, #000 69%, transparent 77%);
+  mask-image: radial-gradient(closest-side, transparent 60%, #000 65%, #000 69%, transparent 77%); }
+.au-rim i { filter: blur(4px); background: conic-gradient(from 0deg, var(--au1), var(--au2), var(--au3), var(--au1)); animation: au-turn 9s linear infinite; }
+.au-rim i + i { background: conic-gradient(from 180deg, var(--au2), transparent 25%, var(--au3) 50%, transparent 75%, var(--au2)); animation: au-turn 13s linear infinite reverse; }
+.au-chase { opacity: 0; transition: opacity .5s ease;
+  -webkit-mask-image: radial-gradient(closest-side, transparent 60%, #000 65%, #000 69.5%, transparent 76%);
+  mask-image: radial-gradient(closest-side, transparent 60%, #000 65%, #000 69.5%, transparent 76%); }
+body[data-phase="transcribing"] .au-chase, body[data-phase="thinking"] .au-chase, body[data-phase="preparing"] .au-chase { opacity: 1; }
+.au-chase i { filter: blur(3px); background: conic-gradient(from 0deg, transparent 0 62%, color-mix(in srgb, var(--au2) 45%, white) 92%, transparent 100%);
+  animation: au-turn 1.6s cubic-bezier(.45, .05, .55, .95) infinite; }
+@keyframes au-turn { to { rotate: 360deg; } }
+@keyframes au-breathe { 50% { opacity: .7; } }
+body:not([data-mic="on"]):not([data-sleep]):not([data-phase="transcribing"]):not([data-phase="thinking"]):not([data-phase="preparing"]):not([data-phase="speaking"]) .orb-aurora i { animation-play-state: paused; }
+
+/* ================================================================ the status chip
+   A glass pill under the orb whose dot and word take the state's colour: aqua while Zen listens,
+   lavender while it thinks, rose while it speaks, and the moon while it sleeps. */
+.orb-state { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 6px 14px 6px 12px; border-radius: 999px;
+  font-size: 13px; font-weight: 500; color: var(--muted); transition: color .4s ease;
+  background: color-mix(in srgb, var(--surface) 40%, transparent); border: 1px solid color-mix(in srgb, var(--ink) 10%, transparent);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+.orb-state .state-dot { width: 7px; height: 7px; background: var(--accent); }
+.orb-state[data-phase='loading'] .state-dot { animation: pulse 1.4s ease-in-out infinite; }
+.orb-state[data-phase='listening'] { color: var(--listen-ink); }
+.orb-state[data-phase='listening'] .state-dot { background: var(--listen-ink); animation: listen-ring 1.8s ease-out infinite; }
+@keyframes listen-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--listen-ink) 45%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+.orb-state[data-phase='transcribing'], .orb-state[data-phase='thinking'], .orb-state[data-phase='preparing'] { color: var(--think-ink); }
+.orb-state[data-phase='transcribing'] .state-dot, .orb-state[data-phase='thinking'] .state-dot, .orb-state[data-phase='preparing'] .state-dot {
+  background: var(--think-ink); box-shadow: 0 0 7px color-mix(in srgb, var(--think-ink) 70%, transparent); animation: pulse 1.2s ease-in-out infinite; }
+.orb-state[data-phase='speaking'] { color: var(--speak-ink); }
+.orb-state[data-phase='speaking'] .state-dot { background: linear-gradient(90deg, #a578ff, #ff8cc8, #78d2ff, #a578ff); background-size: 300% 100%;
+  box-shadow: 0 0 8px rgba(220, 120, 220, .5); animation: dot-shimmer 2.4s ease-in-out infinite alternate; }
+@keyframes dot-shimmer { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
+body[data-sleep] .orb-state { color: var(--think-ink); }
+/* The moon is Zen's own crescent - the brand mark's path, so the two always face the same way -
+   breathing in step with the orb. */
+body[data-sleep] .orb-state .state-dot { width: 13px; height: 13px; background: var(--think-ink); animation: moon-rest 5.5s ease-in-out infinite;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M15.399 3.666 A9 9 0 1 1 3.666 15.399 A8.4 8.4 0 0 0 15.399 3.666Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M15.399 3.666 A9 9 0 1 1 3.666 15.399 A8.4 8.4 0 0 0 15.399 3.666Z'/%3E%3C/svg%3E") center / contain no-repeat; }
+@keyframes moon-rest { 50% { opacity: .55; } }
+
+/* ================================================================ the card
+   Frosted glass over the sky: a fine grain makes it read as frosted rather than flat, a hairline of
+   light runs along its top edge, and a deep soft shadow lifts it. The reply board and the text box
+   are wells cut into it. */
+.console { position: relative; isolation: isolate; min-width: 0; padding: 26px; border: 1px solid var(--glass-edge); border-radius: 24px;
+  background: var(--glass); -webkit-backdrop-filter: blur(26px) saturate(1.6); backdrop-filter: blur(26px) saturate(1.6); box-shadow: var(--glass-shadow); }
+.console::before { content: ''; position: absolute; inset: 0; border-radius: inherit; z-index: -1; pointer-events: none; opacity: var(--grain); mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .9 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E"); }
+
+/* The card catches the orb's light: the edge nearest the orb glows in the aurora's colours, and a
+   soft wash spills into the glass from that side and is gone before the words. It follows the
+   aurora - its state colour, a little brighter with the voice, dark when the aurora rests - and
+   the voice moves only its opacity, so the card is never repainted for it. */
+.glass-light { position: absolute; inset: -1px; border-radius: inherit; z-index: -1; pointer-events: none; opacity: 0; transition: opacity .9s ease; }
+body[data-mic="on"] .glass-light, body[data-phase="transcribing"] .glass-light, body[data-phase="thinking"] .glass-light,
+body[data-phase="preparing"] .glass-light, body[data-phase="speaking"] .glass-light { opacity: 1; }
+.glass-light i { position: absolute; inset: 0; border-radius: inherit; transition: opacity .15s linear, --au1 .9s ease, --au2 .9s ease, --au3 .9s ease; }
+.glass-light .spill { opacity: calc(.55 + var(--b2, 0) * .45);
+  background: radial-gradient(62% 72% at 0% 60%, color-mix(in srgb, var(--au2) var(--spill), transparent), color-mix(in srgb, var(--au1) calc(var(--spill) * .45), transparent) 45%, transparent 75%); }
+.glass-light .edge { padding: 1.5px; opacity: calc(.75 + var(--b1, 0) * .25);
+  background: radial-gradient(48% 72% at 0% 60%, var(--au2), color-mix(in srgb, var(--au1) 60%, transparent) 42%, transparent 82%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+
+/* The reply board: Zen's words at the weight and size of a title, a sentence at a time as each is
+   said. The one being said is at full strength and those before it step back. The frame keeps its
+   size and scrolls, with a slim scrollbar of its own inside the well. The speaker and the mute
+   share its top line; the button is the board's sibling, not inside its live region, so it is not
+   announced with every caption. */
+.board { position: relative; }
+.live-caption { padding: 16px 12px 14px 20px; border-radius: 18px; overflow-wrap: anywhere;
+  background: var(--well); border: 1px solid var(--well-edge); box-shadow: var(--well-shadow); }
+.caption-speaker { margin: 0 0 10px; padding-right: 40px; font-size: 13px; font-weight: 600; color: var(--muted); }
 .live-caption[data-speaker='Zen'] .caption-speaker { color: var(--accent); }
-.caption-wave { height: 20px; display: none; gap: 4px; align-items: center; margin-top: 16px; }
+.caption-frame { position: relative; height: 132px; padding-right: 10px; overflow-y: auto; overscroll-behavior: contain; outline: none;
+  /* A soft top edge. Glided to a line, the tail of a letter on the line above can reach within a
+     pixel of it and show as a speck; the top few pixels of every line are empty space above its
+     capitals, so this hides that without touching a letter. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 3px, #000 5px); mask-image: linear-gradient(to bottom, transparent 3px, #000 5px); }
+.caption-frame:focus-visible { border-radius: 6px; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+.caption-frame::-webkit-scrollbar { width: 4px; }
+.caption-frame::-webkit-scrollbar-track { background: transparent; margin: 2px 0; }
+.caption-frame::-webkit-scrollbar-thumb { border-radius: 4px; background: color-mix(in srgb, var(--ink) 20%, transparent); }
+.caption-frame:hover::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink) 34%, transparent); }
+.caption-frame::-webkit-scrollbar-thumb:active { background: var(--accent); }
+.caption-text { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.022em; line-height: 1.27; }
+.caption-text .sentence { transition: color .5s ease; }
+.caption-text .said { color: color-mix(in srgb, var(--ink) 52%, transparent); }
+.caption-text.arrive, .caption-text .arrive { animation: caption-in .28s ease; }
+@keyframes caption-in { from { opacity: 0; } }
+.live-caption.partial .caption-text { color: var(--muted); }
+/* While Zen works on a reply, a small wave waits under what was said. */
+.caption-wave { display: none; gap: 4px; align-items: center; height: 20px; margin-top: 12px; }
 .waiting .caption-wave { display: flex; }
 .caption-wave i { background: var(--accent); width: 3px; height: 10px; border-radius: 3px; animation: wave 1.1s ease-in-out infinite; }
 .caption-wave i:nth-child(2) { animation-delay: .1s; }.caption-wave i:nth-child(3) { animation-delay: .2s; }.caption-wave i:nth-child(4) { animation-delay: .3s; }.caption-wave i:nth-child(5) { animation-delay: .4s; }
-.voice-controls { display: flex; align-items: center; gap: 4px; }
-.mic-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 13px; background: var(--ink); color: var(--surface); min-height: 48px; padding: 12px 16px; font-size: 12px; font-weight: 550; margin-right: auto; }
-.mic-button:hover:not(:disabled) { opacity: .85; }
-.mic-button[aria-pressed='true'] { color: var(--accent); background: var(--accent-wash); }
-.mic-button svg { width: 18px; height: 18px; }
-.mic-hint { color: var(--soft); font-size: 11px; margin: 12px 0 0; min-height: 34px; }
-.composer-divider { display: flex; align-items: center; gap: 10px; color: var(--soft); font-size: 10px; margin: 10px 0 18px; }
-.composer-divider::before, .composer-divider::after { content: ''; height: 1px; background: var(--line); flex: 1; }
-.composer { display: flex; align-items: center; min-width: 0; background: var(--sunken); border: 1px solid var(--line); border-radius: 14px; padding: 5px; }
-.composer:focus-within { border-color: var(--accent); }
-.composer input { width: 100%; min-width: 0; border: 0; outline: none; background: transparent; padding: 10px 9px; font-size: 13px; }
-input::placeholder, textarea::placeholder { color: var(--soft); opacity: 1; }
-.composer button { display: inline-flex; justify-content: center; align-items: center; width: 40px; height: 40px; border: 0; border-radius: 10px; background: var(--surface); color: var(--accent); flex-shrink: 0; }
-.composer button:hover:not(:disabled) { background: var(--accent-wash); }
-.home-status { color: var(--muted); font-size: 11px; line-height: 1.65; min-height: 18px; margin: 14px 0 0; overflow-wrap: anywhere; }
+.sound-button { display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; background: none; color: var(--ink); }
+.board .sound-button { position: absolute; top: 8px; right: 10px; width: 36px; height: 36px; border-radius: 18px; }
+.sound-button:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+/* Muted, the button says so in the error colour: the one state that changes what is heard. */
+.sound-button[aria-pressed='true'] { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
+.sound-button svg { width: 21px; height: 21px; stroke-width: 2.1; }
+
+/* One row of controls in one hand: the microphone, Stop while Zen talks, and the conversation. */
+.voice-controls { display: flex; align-items: center; gap: 6px; margin: 14px 0 0; }
+.voice-controls .grow { flex: 1; }
+/* The microphone, one family in two states, both a matte key raised off the card: a fine grain
+   instead of a shine, a soft fall of light, and the same edge and shadow on every side, so it
+   sits level instead of tipping toward the viewer. Pressed, it sinks straight into the card.
+   Off, "Start talking" is filled with the page's action colour - the lavender Send takes once
+   there is text. On, it is a pale key with a lavender icon: the orb and the chip already say
+   Zen is listening. */
+.mic-button { --key: var(--accent); --rim: color-mix(in srgb, var(--accent) 72%, #0b0a1a); --inner: rgba(255, 255, 255, .16);
+  --drop: color-mix(in srgb, var(--rim) 70%, transparent);
+  position: relative; isolation: isolate; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 36px; margin-right: 4px; padding: 0 15px 0 12px; border: 0; border-radius: 18px; font-size: 13px; font-weight: 600; color: var(--on-accent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--key) 94%, #fff), color-mix(in srgb, var(--key) 95%, #000));
+  box-shadow: inset 0 0 0 1px var(--inner), 0 0 0 1px var(--rim), 0 1px 12px -2px var(--drop);
+  transition: scale .09s ease, box-shadow .09s ease, color .25s ease, filter .2s ease; }
+.mic-button::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; opacity: .28; mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E"); }
+.mic-button:hover:not(:disabled) { filter: brightness(1.05); }
+.mic-button:active:not(:disabled) { transform: none; scale: .97; box-shadow: inset 0 0 0 1px var(--inner), 0 0 0 1px var(--rim), 0 0 4px -1px var(--drop); }
+.mic-button[aria-pressed='true'] { --key: var(--key-on); --rim: var(--key-on-base); --inner: var(--key-on-edge); --drop: var(--key-on-drop); color: var(--ink); }
+.mic-button[aria-pressed='true'] svg { color: var(--accent); }
+.mic-button svg { width: 17px; height: 17px; stroke-width: 1.8; }
+.stop-link { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; border: 0; border-radius: 18px; background: none; color: var(--error); font-size: 13px; font-weight: 600; }
+.stop-link:hover:not(:disabled) { background: color-mix(in srgb, var(--error) 10%, transparent); }
+.stop-link .square { width: 10px; height: 10px; border-radius: 3px; background: var(--error); }
+.stop-link.away { visibility: hidden; }
+.conversation-link { display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 10px 0 12px; border: 0; border-radius: 18px; background: none; color: var(--muted); font-size: 13px; font-weight: 600; }
+.conversation-link:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.conversation-link .chev { width: 6px; height: 6px; border-right: 1.7px solid currentColor; border-bottom: 1.7px solid currentColor; transform: rotate(-45deg); }
+.conversation-link svg { display: none; width: 18px; height: 18px; }
+
+/* Status messages - loading, errors, a new conversation, falling asleep - have their own slot
+   under the controls, kept as the gap before the divider, so the card never jumps. */
+.home-status { margin: 8px 0 0; min-height: 18px; font-size: 13px; line-height: 1.65; color: var(--muted); overflow-wrap: anywhere; }
 .home-status.error { color: var(--error); }
-footer { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 22px 36px; font-size: 10px; color: var(--soft); }
-footer > span:first-child { display: flex; gap: 7px; align-items: center; }
-dialog { color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 28px; width: min(520px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); box-shadow: 0 24px 100px #0003; overflow: auto; scrollbar-width: thin; }
-dialog::backdrop { background: #11122260; backdrop-filter: blur(6px); }
-.panel-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 22px; }
-.panel-heading .eyebrow { margin-bottom: 6px; }
-h2 { font-size: 25px; font-weight: 550; letter-spacing: -.04em; line-height: 1.2; margin: 0; }
-h3 { font-size: 12px; font-weight: 600; margin: 0 0 14px; }
-.settings-group + .settings-group { border-top: 1px solid var(--line); margin-top: 24px; padding-top: 24px; }
-textarea, select { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--sunken); font-size: 12px; }
-textarea { resize: vertical; min-height: 92px; max-height: 200px; line-height: 1.6; }
-.field-note, .panel-footnote, .settings-footer { color: var(--soft); font-size: 11px; line-height: 1.7; margin: 8px 0; }
-#promptCount:empty { display: none; }
-.button-secondary { min-height: 44px; padding: 10px 14px; background: var(--accent-wash); color: var(--accent); border: 1px solid transparent; border-radius: 10px; font-size: 12px; font-weight: 550; margin-top: 8px; }
-.button-secondary:hover:not(:disabled) { border-color: var(--accent); }
-.field { display: grid; gap: 7px; margin-bottom: 14px; }
-.segmented { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--sunken); }
-.segmented button { flex: 1; min-height: 36px; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 550; }
+.composer-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 18px; font-size: 12px; font-weight: 500; color: var(--soft); }
+.composer-divider::before, .composer-divider::after { content: ''; height: 1px; background: var(--divider); flex: 1; }
+
+/* The text box grows with what is typed, then scrolls. Focused, it gets a firmer edge. Send is a
+   filled circle when there is something to send, quiet when there is not. */
+.composer { display: flex; align-items: flex-end; min-width: 0; padding: 5px 5px 5px 7px; border-radius: 16px;
+  background: var(--well); border: 1px solid var(--well-edge); box-shadow: var(--well-shadow); transition: border-color .16s ease, box-shadow .16s ease; }
+.composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 0 5px color-mix(in srgb, var(--accent) 13%, transparent); }
+.composer textarea { width: 100%; min-width: 0; max-height: calc(16px * 1.45 * 5 + 16px); padding: 8px; border: 0; outline: none; background: transparent; resize: none;
+  overflow-y: hidden; font: 500 16px/1.45 Inter, 'Segoe UI', sans-serif; }
+.composer textarea.scrolls { overflow-y: auto; scrollbar-width: thin; }
+.composer button { display: inline-flex; justify-content: center; align-items: center; width: 36px; height: 36px; margin: 1px; flex-shrink: 0;
+  border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+.composer button:hover:not(:disabled) { background: var(--accent-ink); }
+.composer button:disabled { opacity: 1; cursor: default; background: var(--line); color: var(--soft); box-shadow: none; }
+.composer button svg { width: 18px; height: 18px; stroke-width: 2.2; }
+
+/* ================================================================ the starters
+   A few ways in, for the first moment only. Tapping one sends it to Zen, and the pill steps away
+   once the conversation begins. The same frosted glass as the card. */
+.starters { position: fixed; z-index: 3; left: 50%; bottom: 18px; translate: -50% 0; display: flex; align-items: center; gap: 6px;
+  padding: 6px 6px 6px 16px; border-radius: 999px; border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow);
+  background: var(--glass); -webkit-backdrop-filter: blur(22px) saturate(1.6); backdrop-filter: blur(22px) saturate(1.6); transition: opacity .45s ease, translate .45s ease; }
+.starters .try { display: flex; align-items: center; gap: 7px; margin-right: 4px; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.starters .try::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 70%, transparent); }
+.starters button { border: 0; border-radius: 999px; padding: 8px 14px; background: color-mix(in srgb, var(--ink) 6%, transparent); font-size: 13px; font-weight: 550; white-space: nowrap; transition: background .2s ease; }
+.starters button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+body[data-started] .starters { opacity: 0; translate: -50% 12px; pointer-events: none; visibility: hidden; transition: opacity .45s ease, translate .45s ease, visibility 0s .45s; }
+
+/* ================================================================ sheets
+   Real frosted glass: they float over the page, so the orb's colours show through them. Settings
+   are grouped rows, a label on the left and its value or control on the right. */
+dialog.sheet { display: none; flex-direction: column; padding: 0; overflow: hidden; color: var(--ink); border: 0; border-radius: 24px; width: min(560px, calc(100vw - 32px)); max-height: min(720px, calc(100dvh - 40px));
+  background: var(--sheet-glass); -webkit-backdrop-filter: blur(30px) saturate(1.4); backdrop-filter: blur(30px) saturate(1.4); box-shadow: var(--sheet-shadow); }
+dialog.sheet[open] { display: flex; animation: sheet-in .28s var(--ease-out); }
+dialog.sheet::backdrop { background: rgba(10, 10, 20, .24); backdrop-filter: blur(10px); }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(12px) scale(.985); } }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 16px 8px 24px; }
+.sheet-head h2 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.02em; line-height: 1.2; }
+.sheet-body { overflow-y: auto; padding: 0 20px 22px; scrollbar-width: thin; }
+.group-title { margin: 18px 4px 7px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.group { background: var(--sheet-group); border-radius: 14px; box-shadow: inset 0 0 0 1px var(--hairline); overflow: hidden; }
+.group .row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 46px; padding: 10px 16px; position: relative; }
+.group .row + .row::before, .features .row::before { content: ''; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--hairline); }
+.group .row.block { display: block; }
+.group .label { font-size: 15px; color: var(--ink); }
+.group .row > .label { flex: 1 1 auto; min-width: 0; }
+.group .row > .value, .group .row > .select, .group .row > .segmented, .group .row > .link-button { flex-shrink: 0; }
+.group .sub { display: block; font-size: 13px; line-height: 1.45; color: var(--muted); margin-top: 2px; }
+.group .value { font-size: 15px; color: var(--muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.group textarea { display: block; width: 100%; margin-top: 8px; min-height: 76px; max-height: 200px; resize: vertical; border: 0; outline: 0; border-radius: 10px; background: var(--sunken); padding: 10px 12px; font-size: 15px; line-height: 1.45; }
+.group textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.group .count:empty { display: none; }
+.features { display: contents; }
+.foot-note { margin: 7px 4px 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.link-button { border: 0; background: none; padding: 6px 2px; color: var(--accent-ink); font-size: 15px; font-weight: 550; white-space: nowrap; }
+.link-button:hover:not(:disabled) { opacity: .8; }
+.segmented { display: inline-flex; background: var(--sunken); border-radius: 9px; padding: 2px; }
+.segmented button { min-width: 72px; height: 28px; border: 0; border-radius: 7px; background: transparent; font-size: 13px; font-weight: 550; color: var(--muted); }
 .segmented button:hover { color: var(--ink); }
-.segmented button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
-.field label, .field > span { font-size: 12px; color: var(--muted); }
-input[type="range"] { width: 100%; accent-color: var(--accent); }
-.audio-features { background: var(--sunken); border-radius: 10px; color: var(--muted); padding: 12px; font-size: 11px; line-height: 1.6; }
-.audio-feature { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; }
-.audio-feature span:last-child { color: var(--ink); }
-.settings-footer { margin: 20px 0 0; }
-.transcript-panel { width: min(580px, calc(100vw - 32px)); }
-.transcript { min-height: 150px; max-height: calc(100dvh - 260px); overflow: auto; scrollbar-width: thin; }
-.transcript-empty { font-size: 13px; color: var(--soft); padding: 30px 0; text-align: center; }
-.transcript-entry { display: grid; gap: 7px; padding: 16px; margin: 8px 0; background: var(--sunken); border-radius: 12px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
-.transcript-entry .speaker { font-size: 10px; font-weight: 600; color: var(--muted); }
-.transcript-entry[data-speaker='Zen'] { background: var(--accent-wash); }
-.transcript-entry[data-speaker='Zen'] .speaker { color: var(--accent); }
-.panel-footnote { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 16px; }
-@keyframes pulse { 50% { opacity: .3; } }
-@keyframes wave { 50% { transform: scaleY(1.7); opacity: .6; } }
-.orb-stage {
-  width: 100%;
-  height: 100%;
-  position: relative;
-  isolation: isolate;
-  touch-action: pan-y;
-}
+.segmented button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0, 0, 0, .1), inset 0 0 0 1px var(--hairline); }
+/* Choosing a device. Zen draws the list itself: a native select opens the operating system's
+   own popup, which no stylesheet can reach - it arrives in the system font, full width, with
+   every duplicate Windows knows about. */
+.picker { display: inline-flex; align-items: center; gap: 6px; max-width: 280px; min-width: 0; height: 30px; padding: 0 6px 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 15px; cursor: pointer; }
+.picker:hover, .picker[aria-expanded="true"] { background: var(--sunken); color: var(--ink); }
+.picker:focus-visible { outline: 2px solid var(--accent); }
+.picker .chosen { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker[aria-disabled="true"] { opacity: .55; }
+.picker[aria-disabled="true"]:hover { background: none; color: var(--muted); }
+.menu.note { max-width: 260px; padding: 12px 14px; font-size: 14px; line-height: 1.45; color: var(--ink); }
+.picker .chevron { flex: none; width: 7px; height: 7px; margin: -3px 3px 0 0; border-right: 1.7px solid currentColor; border-bottom: 1.7px solid currentColor; transform: rotate(45deg); opacity: .75; }
+.menu { position: fixed; z-index: 40; min-width: 200px; max-width: min(320px, calc(100vw - 32px)); max-height: 280px; overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); box-shadow: 0 1px 2px #0000000f, 0 12px 32px #00000022; animation: menu-in .12s ease-out; }
+@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+.menu button { display: block; width: 100%; padding: 7px 8px 7px 26px; border: 0; border-radius: 8px; background: none; color: var(--ink); font: inherit; font-size: 15px; text-align: left; position: relative; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.menu button:hover, .menu button:focus-visible { background: var(--sunken); outline: 0; }
+.menu button[aria-selected="true"]::before { content: ''; position: absolute; left: 9px; top: 50%; width: 5px; height: 9px; margin-top: -6px; border-right: 1.8px solid var(--accent-ink); border-bottom: 1.8px solid var(--accent-ink); transform: rotate(42deg); }
+.danger-row { width: 100%; border: 0; background: none; padding: 0; text-align: left; color: var(--error); font-size: 15px; font-weight: 550; }
+.danger-row .sub { font-weight: 400; }
+.confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 12px; width: 100%; }
+.confirm > div:first-child { flex: 1 1 200px; }
+.confirm p { margin: 0; }
+.confirm-actions { display: flex; gap: 8px; margin-left: auto; }
+.pill { height: 34px; padding: 0 14px; border: 0; border-radius: 17px; font-size: 14px; font-weight: 550; background: var(--sunken); color: var(--ink); white-space: nowrap; }
+.pill.danger { background: var(--error); color: var(--on-error); }
+.settings-footer { margin: 18px 0 0; text-align: center; font-size: 13px; color: var(--muted); }
 
-.orb-stage canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-  position: relative;
-  z-index: 2;
-  filter: drop-shadow(0 18px 22px rgba(39, 43, 62, 0.16))
-    drop-shadow(0 5px 10px rgba(39, 43, 62, 0.08));
-}
+/* The conversation: what you said on the right, in a bubble; what Zen said on the left, set as
+   speech. */
+.history { display: flex; flex-direction: column; gap: 14px; padding-top: 6px; }
+.history-empty { margin: 0; padding: 30px 0; text-align: center; font-size: 13px; color: var(--soft); }
+.history-entry p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.msg-you { align-self: flex-end; max-width: 82%; padding: 10px 14px; border-radius: 18px 18px 6px 18px; background: var(--sunken); font-size: 15px; font-weight: 500; }
+.msg-zen { max-width: 92%; }
+.msg-zen .who { margin-bottom: 3px; font-size: 12px; font-weight: 600; color: var(--accent); }
+.msg-zen p { font: 400 19px/1.45 var(--voice); font-optical-sizing: auto; }
+.history-note { margin: 20px 4px 0; }
 
-.orb-halo {
-  position: absolute;
-  inset: 14% 12% auto 12%;
-  height: 66%;
-  border-radius: 50%;
-  background: radial-gradient(ellipse, var(--accent-wash), transparent 68%);
-  filter: blur(26px);
-  opacity: 0.9;
-  transition: opacity var(--duration-slow) var(--ease-out);
-}
-
-.orb-shadow {
-  position: absolute;
-  width: 46%;
-  height: 6%;
-  left: 27%;
-  bottom: 4%;
-  border-radius: 50%;
-  background: rgba(60, 64, 92, 0.24);
-  filter: blur(14px);
-  transform: scaleY(0.55);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .orb-shadow {
-    background: rgba(0, 0, 0, 0.6);
-  }
-  :root:not([data-theme="light"]) .orb-stage canvas {
-    filter: drop-shadow(0 18px 34px rgba(94, 92, 230, 0.22));
-  }
-}
-:root[data-theme="dark"] .orb-shadow {
-  background: rgba(0, 0, 0, 0.6);
-}
-:root[data-theme="dark"] .orb-stage canvas {
-  filter: drop-shadow(0 18px 34px rgba(94, 92, 230, 0.22));
-}
-
-@keyframes breathe {
-  50% {
-    transform: translateY(-6px) rotate(3deg);
-    border-radius: 52% 48% 51% 49%;
-  }
-}
-
-.orb-fallback {
-  position: absolute;
-  left: 19%;
-  top: 11%;
-  width: 62%;
-  aspect-ratio: 1;
-  border-radius: 48% 52% 49% 51%;
-  background:
-    radial-gradient(
-      ellipse at 30% 18%,
-      #fff 3%,
-      #dce6f2 16%,
-      transparent 32%
-    ),
-    radial-gradient(
-      ellipse at 63% 73%,
-      #cebedf 0%,
-      #aac6dc 30%,
-      #607b99 59%,
-      #f1f2fa 70%
-    );
-  box-shadow:
-    inset -10px -8px 18px rgba(84, 88, 109, 0.2),
-    inset 4px 6px 20px #fff;
-  animation: breathe 7s var(--ease-out) infinite;
-}
-
-.orb-stage.webgl .orb-fallback {
-  display: none;
-}
-
-
-@media (max-width: 1050px) { .brand-tagline { display: none; } .console { padding: 22px; } .stage { padding-inline: 28px; gap: 28px; } }
+/* ================================================================ smaller windows */
+@media (max-width: 1050px) { .console { padding: 22px; } .stage { padding-inline: 28px; gap: 28px; } .topbar { --edge: 28px; } }
 @media (max-width: 760px) {
-  .topbar { min-height: 68px; padding: 12px 20px; }
+  .topbar { --column: 520px; --edge: 20px; min-height: 52px; padding: 4px 4px 4px 14px; }
   .stage { grid-template-columns: 1fr; max-width: 520px; padding: 16px 20px 20px; gap: 22px; }
   .hero h1 { font-size: 32px; }.hero .eyebrow { margin-bottom: 12px; }
-  .lede { margin-top: 14px; font-size: 12px; }
   .hero-orb { width: 240px; height: 190px; margin-top: 0; }
-  .console { padding: 22px; }.live-caption { min-height: 145px; padding: 26px 0; }
-  .caption-text { font-size: 24px; }.mic-hint { min-height: 18px; }
-  footer { padding: 20px; justify-content: center; }footer > span:last-child { display: none; }
-  body[data-active='true'] .hero h1, body[data-active='true'] .hero .lede { display: none; }
+  .console { padding: 22px; }
+  .caption-frame { height: 124px; }
+  .caption-text { font-size: 22px; }
+  body[data-active='true'] .hero h1 { display: none; }
+  /* The orb sits above the card, so its light comes from the top. */
+  .glass-light .spill { background: radial-gradient(72% 55% at 50% 0%, color-mix(in srgb, var(--au2) var(--spill), transparent), color-mix(in srgb, var(--au1) calc(var(--spill) * .45), transparent) 45%, transparent 75%); }
+  .glass-light .edge { background: radial-gradient(62% 40% at 50% 0%, var(--au2), color-mix(in srgb, var(--au1) 60%, transparent) 42%, transparent 82%); }
+  /* The starters fall in below the card. */
+  .starters { position: static; translate: none; flex-wrap: wrap; justify-content: center; width: fit-content; max-width: calc(100% - 32px); margin: 18px auto 28px; padding: 8px 10px; border-radius: 22px; }
+  body[data-started] .starters { display: none; }
+}
+@media (max-width: 520px) { .brand-by { display: none; } }
+/* One line of controls on a phone too: the conversation becomes its icon, and nothing stretches. */
+@media (max-width: 420px) {
+  .voice-controls .mic-button { flex: 0 0 auto; margin: 0 2px 0 0; }
+  .conversation-link { width: 36px; padding: 0; justify-content: center; }
+  .conversation-link .text, .conversation-link .chev { display: none; }
+  .conversation-link svg { display: block; }
 }
 @media (max-width: 400px) {
-  .stage { padding-inline: 14px; }.console { padding: 18px; }.topbar { padding-inline: 14px; }.status-chip { font-size: 10px; padding-inline: 7px; }
-  .header-actions { gap: 2px; }.voice-controls { flex-wrap: wrap; }.mic-button { flex: 1 1 100%; margin: 0 0 5px; }.voice-controls > .icon-button { flex: 1; }
-  dialog { padding: 22px; }
+  .stage { padding-inline: 14px; }.console { padding: 18px; }.topbar { --edge: 14px; }
+  .header-actions { gap: 2px; }
 }
-@media (max-height: 680px) and (min-width: 761px) { .topbar { min-height: 64px; }.stage { padding-block: 16px; }.hero-orb { height: 220px; width: 290px; }h1 { font-size: 34px; }.lede { margin-top: 14px; }footer { padding-block: 16px; } }
+@media (max-height: 680px) and (min-width: 761px) { .topbar { min-height: 52px; margin-block: 8px; }.stage { padding-top: 16px; }.hero-orb { height: 220px; width: 290px; }h1 { font-size: 34px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 @media (prefers-contrast: more) { :root { --soft: var(--ink); --muted: var(--ink); --line: var(--ink); } }

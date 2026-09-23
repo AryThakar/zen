@@ -25,8 +25,10 @@ these are the properties it is meant to keep:
   defaults, notifications, and Zen's own engine commands (`capabilities/default.json`).
 - **Validated input.** Every frame from the page is size-capped and revision-fenced; control
   messages with an unknown type or field are rejected. See [PROTOCOL.md](PROTOCOL.md).
-- **No conversation data at rest.** Audio, transcripts, prompts and native library output are
-  not written to disk, and llama-server's disk KV save/restore is disabled. This is an
+- **No conversation data at rest.** Audio, transcripts, replies and native library output are
+  not written to disk, and llama-server's disk KV save/restore is disabled. The window keeps
+  only its settings between launches - the instructions typed into Settings, the theme, the
+  quiet setting and the learned listening pause - in the webview's own storage. This is an
   application policy, not secure erasure: it does not cover OS swap, crash dumps or backups
   made by other tools.
 - **Contained native code.** The ASR and TTS libraries run in separate processes, and every

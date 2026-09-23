@@ -20,14 +20,34 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::SyncSender,
-        Arc, Mutex,
+        Mutex,
     },
-    time::Instant,
 };
+
+use crate::resample::StreamResampler;
 
 /// Rate the codec produces. Distinct from the 16 kHz capture side.
 pub const TTS_SAMPLE_RATE: u32 = 24_000;
+
+/// Audio per character at the slowest pace this voice has been measured speaking: 47.4 to
+/// 56.0 ms across eight reply-shaped passages and eight lengths of one passage
+/// (`examples/phrasepace.rs`). Speech length follows characters far more closely than words,
+/// which vary from "a" to "internationalisation".
+pub const SLOWEST_MS_PER_CHAR: usize = 56;
+
+/// The codec emits one frame per 80 ms of audio - it is the "12 Hz" tokenizer, at 12.5 Hz.
+const CODEC_FRAME_MS: usize = 80;
+
+/// Frames synthesis may produce for `text`.
+///
+/// Budgeted from the text rather than left at a fixed ceiling: an unbounded budget on a short
+/// phrase lets the model ramble past the end of the sentence. Twice the slowest measured pace
+/// leaves room for a slow, emphatic delivery. It was five frames a word, which gave a phrase of
+/// long words less time than it takes to say them, and cut it off before its end.
+fn frame_budget(text: &str) -> i32 {
+    let frames = text.trim().chars().count() * 2 * SLOWEST_MS_PER_CHAR / CODEC_FRAME_MS;
+    frames.clamp(100, 1_500) as i32
+}
 
 #[repr(C)]
 pub struct QtContext {
@@ -138,9 +158,8 @@ pub enum TtsError {
 type AudioCallback<'a> = &'a mut dyn FnMut(&[f32]) -> bool;
 struct ChunkSink<'a> {
     /// Streaming destination. When absent, chunks accumulate instead.
-    sender: Option<SyncSender<Vec<f32>>>,
-    collected: Vec<f32>,
     callback: Option<AudioCallback<'a>>,
+    collected: Vec<f32>,
     cancelled: &'a AtomicBool,
 }
 
@@ -163,34 +182,17 @@ unsafe extern "C" fn on_chunk(samples: *const f32, count: i32, user_data: *mut c
         if slice.iter().any(|sample| !sample.is_finite()) {
             return false;
         }
+        // A consumer that returns false has stopped listening - the listener interrupted, or
+        // shutdown began - and the rest of the sentence is abandoned rather than synthesised
+        // into a buffer nobody will hear.
         if let Some(callback) = sink.callback.as_mut() {
             return callback(slice);
         }
-        match &sink.sender {
-            // A closed channel means playback stopped - the listener interrupted, or shutdown
-            // began. Reporting false abandons the rest of the sentence rather than synthesising
-            // into a buffer nobody will hear.
-            Some(sender) => {
-                let mut chunk = slice.to_vec();
-                while !sink.cancelled.load(Ordering::Acquire) {
-                    match sender.try_send(chunk) {
-                        Ok(()) => return true,
-                        Err(std::sync::mpsc::TrySendError::Full(value)) => chunk = value,
-                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return false,
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(2));
-                }
-                false
-            }
-            None => {
-                if sink.collected.len().saturating_add(slice.len()) > TTS_SAMPLE_RATE as usize * 180
-                {
-                    return false;
-                }
-                sink.collected.extend_from_slice(slice);
-                true
-            }
+        if sink.collected.len().saturating_add(slice.len()) > TTS_SAMPLE_RATE as usize * 180 {
+            return false;
         }
+        sink.collected.extend_from_slice(slice);
+        true
     }))
     .unwrap_or(false)
 }
@@ -230,8 +232,6 @@ pub struct TtsEngine {
     symbols: Symbols,
     inner: Mutex<Inner>,
     reference_text: Option<CString>,
-    cancel: Arc<AtomicBool>,
-    pub talker_path: PathBuf,
 }
 
 pub trait Synthesizer: Send + Sync {
@@ -266,11 +266,31 @@ fn talker_file(model_dir: &Path) -> PathBuf {
         "qwen-talker-0.6b-base-Q8_0.gguf",
         "qwen-talker-0.6b-base-Q4_K_M.gguf",
     ];
-    BY_QUALITY
-        .into_iter()
+    best_of(model_dir, &BY_QUALITY)
+}
+
+/// The codec, which turns the talker's tokens back into a waveform.
+///
+/// Chosen the same way as the talker rather than named outright. It was hardcoded to the Q4
+/// file, so dropping a higher-precision codec into the model directory changed nothing and
+/// there was no way to tell from the outside that it had been ignored. The two models are
+/// independent: the talker decides what is said, this decides how it sounds, and either can be
+/// upgraded on its own if there is room for it.
+fn codec_file(model_dir: &Path) -> PathBuf {
+    const BY_QUALITY: [&str; 2] = [
+        "qwen-tokenizer-12hz-Q8_0.gguf",
+        "qwen-tokenizer-12hz-Q4_K_M.gguf",
+    ];
+    best_of(model_dir, &BY_QUALITY)
+}
+
+/// The first of `names` present, or the last as the name to complain about when none is.
+fn best_of(model_dir: &Path, names: &[&str]) -> PathBuf {
+    names
+        .iter()
         .map(|name| model_dir.join(name))
         .find(|path| path.is_file())
-        .unwrap_or_else(|| model_dir.join(BY_QUALITY[1]))
+        .unwrap_or_else(|| model_dir.join(names[names.len() - 1]))
 }
 
 impl TtsEngine {
@@ -281,7 +301,7 @@ impl TtsEngine {
         let library_path = library.as_ref().to_path_buf();
         let model_dir = model_dir.as_ref();
         let talker_path = talker_file(model_dir);
-        let codec_path = model_dir.join("qwen-tokenizer-12hz-Q4_K_M.gguf");
+        let codec_path = codec_file(model_dir);
         let reference_wav = model_dir.join("user_ref_voice.wav");
         let reference_txt = model_dir.join("user_ref_text.txt");
 
@@ -393,20 +413,13 @@ impl TtsEngine {
                 },
                 inner: Mutex::new(Inner { context, voice }),
                 reference_text,
-                cancel: Arc::new(AtomicBool::new(false)),
-                talker_path,
             })
         }
     }
 
-    /// Asks in-flight synthesis to stop at the next chunk boundary.
-    pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::Relaxed);
-    }
-
     /// Synthesises to a buffer.
     pub fn synthesize(&self, text: &str) -> Result<Vec<f32>, TtsError> {
-        self.run(text, None, None, &self.cancel)
+        self.run(text, None, &AtomicBool::new(false))
     }
 
     /// A turn owns this cancellation flag. It is never reset by a later synthesis job.
@@ -416,13 +429,12 @@ impl TtsEngine {
         cancelled: &AtomicBool,
         callback: &mut dyn FnMut(&[f32]) -> bool,
     ) -> Result<(), TtsError> {
-        self.run(text, None, Some(callback), cancelled).map(|_| ())
+        self.run(text, Some(callback), cancelled).map(|_| ())
     }
 
     fn run<'a>(
         &self,
         text: &str,
-        sender: Option<SyncSender<Vec<f32>>>,
         callback: Option<AudioCallback<'a>>,
         cancelled: &'a AtomicBool,
     ) -> Result<Vec<f32>, TtsError> {
@@ -432,8 +444,7 @@ impl TtsEngine {
         if text.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let started = Instant::now();
-        let streaming = sender.is_some() || callback.is_some();
+        let streaming = callback.is_some();
         let inner = self
             .inner
             .lock()
@@ -442,9 +453,8 @@ impl TtsEngine {
         let text_c = CString::new(text.replace('\0', ""))
             .map_err(|error| TtsError::Synthesis(error.to_string()))?;
         let mut sink = ChunkSink {
-            sender,
-            collected: Vec::new(),
             callback,
+            collected: Vec::new(),
             cancelled,
         };
 
@@ -464,10 +474,7 @@ impl TtsEngine {
             if let Some(reference) = &self.reference_text {
                 params.ref_text = reference.as_ptr();
             }
-            // Budgeted from the text rather than left at a fixed ceiling: an unbounded budget on
-            // a short phrase lets the model ramble past the end of the sentence.
-            let words = text.split_whitespace().count() as i32;
-            params.max_new_tokens = (words * 5).clamp(100, 1_500);
+            params.max_new_tokens = frame_budget(text);
             // Keep codec sampling conservative. The library defaults are tuned for open-ended
             // generation; on short streamed phrases they occasionally produce unstable phonemes
             // and a smeared syllable. Lower temperature and nucleus sampling retain prosody while
@@ -510,7 +517,6 @@ impl TtsEngine {
             }
             if streaming {
                 if status == QtStatus::Ok as i32 {
-                    let _ = started;
                     return Ok(Vec::new());
                 }
                 return Err(TtsError::Synthesis(read_error(self.symbols.last_error)));
@@ -528,13 +534,17 @@ impl TtsEngine {
 
 impl Drop for TtsEngine {
     fn drop(&mut self) {
-        if let Ok(mut inner) = self.inner.lock() {
-            unsafe {
-                (self.symbols.voice_ref_free)(&mut inner.voice);
-                if !inner.context.is_null() {
-                    (self.symbols.free)(inner.context);
-                    inner.context = std::ptr::null_mut();
-                }
+        // A panic mid-synthesis poisons the lock but leaves the context as valid as it was;
+        // skipping the free then would leak the model's graphics memory.
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        unsafe {
+            (self.symbols.voice_ref_free)(&mut inner.voice);
+            if !inner.context.is_null() {
+                (self.symbols.free)(inner.context);
+                inner.context = std::ptr::null_mut();
             }
         }
     }
@@ -572,6 +582,7 @@ fn preload_dependencies(library_path: &Path) {
     //
     // Otherwise bin/, which is where a hand-built layout keeps the one CUDA ggml that the
     // server and synthesis were both compiled against and share.
+    //
     // The whole set, not merely some of it. A directory holding one build's ggml.dll beside
     // another's ggml-cuda.dll registers no backend at all and synthesis silently drops to the
     // processor: measured here as 3.2 s of speech taking 16.7 s instead of 1.5 s. Requiring
@@ -641,8 +652,10 @@ unsafe fn read_error(last_error: FnLastError) -> String {
 
 /// Loads the reference voice as 24 kHz mono float.
 ///
-/// The speaker embedding is extracted from this once at startup, so its quality sets the
-/// character of every reply the assistant ever speaks.
+/// The speaker embedding and the codec's reference codes are both taken from this once at
+/// startup, so its quality sets the character of every reply the assistant ever speaks - which
+/// is why a clip at another rate goes through the same band-limited converter as everything
+/// else, not a cheaper one.
 fn read_reference_wav(path: &Path) -> Result<Vec<f32>, TtsError> {
     let mut reader =
         hound::WavReader::open(path).map_err(|error| TtsError::Reference(error.to_string()))?;
@@ -674,29 +687,14 @@ fn read_reference_wav(path: &Path) -> Result<Vec<f32>, TtsError> {
     if spec.sample_rate == TTS_SAMPLE_RATE {
         return Ok(mono);
     }
-    Ok(resample_linear(&mono, spec.sample_rate, TTS_SAMPLE_RATE))
-}
-
-/// Linear resampling, adequate here and nowhere else.
-///
-/// This runs once, on a reference clip, to feed a speaker-embedding model that is insensitive to
-/// the interpolation artefacts it introduces. The capture path uses a proper filter because there
-/// the output is transcribed.
-fn resample_linear(samples: &[f32], from: u32, to: u32) -> Vec<f32> {
-    if samples.is_empty() || from == 0 {
-        return Vec::new();
-    }
-    let ratio = to as f64 / from as f64;
-    let count = (samples.len() as f64 * ratio).round() as usize;
-    (0..count)
-        .map(|index| {
-            let position = index as f64 / ratio;
-            let left = position.floor() as usize;
-            let right = (left + 1).min(samples.len() - 1);
-            let fraction = (position - left as f64) as f32;
-            samples[left.min(samples.len() - 1)] * (1.0 - fraction) + samples[right] * fraction
-        })
-        .collect()
+    let converted = || -> Result<Vec<f32>, crate::audio::AudioError> {
+        let mut converter = StreamResampler::new(spec.sample_rate, TTS_SAMPLE_RATE)?;
+        let mut out = Vec::new();
+        converter.push(&mono, &mut out)?;
+        converter.finish(&mut out)?;
+        Ok(out)
+    };
+    converted().map_err(|error| TtsError::Reference(error.to_string()))
 }
 
 #[cfg(test)]
@@ -731,23 +729,50 @@ mod tests {
     }
 
     #[test]
-    fn resampling_preserves_duration() {
-        let input = vec![0.0f32; 48_000];
-        let output = resample_linear(&input, 48_000, 24_000);
-        assert_eq!(output.len(), 24_000);
+    fn a_reference_at_another_rate_is_read_at_the_codec_rate() {
+        let dir = std::env::temp_dir().join(format!("zen-reference-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("stereo-44k.wav");
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 44_100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&path, spec).unwrap();
+        // One second of a 440 Hz tone, the same in both channels.
+        for n in 0..44_100 {
+            let value = (f32::sin(n as f32 * 2.0 * std::f32::consts::PI * 440.0 / 44_100.0)
+                * 16_000.0) as i16;
+            writer.write_sample(value).unwrap();
+            writer.write_sample(value).unwrap();
+        }
+        writer.finalize().unwrap();
+        let samples = read_reference_wav(&path).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(samples.len(), 24_000, "the duration is kept");
+        // Away from the edges the tone comes through at its own level.
+        let middle = &samples[6_000..18_000];
+        let rms = (middle.iter().map(|s| s * s).sum::<f32>() / middle.len() as f32).sqrt();
+        let expected = 16_000.0 / 32_768.0 / std::f32::consts::SQRT_2;
+        assert!(
+            (rms - expected).abs() < 0.01,
+            "rms {rms}, expected {expected}"
+        );
     }
 
     #[test]
-    fn resampling_a_constant_signal_leaves_it_constant() {
-        // Interpolation between equal neighbours must not introduce ripple.
-        let input = vec![0.5f32; 1_000];
-        let output = resample_linear(&input, 44_100, 24_000);
-        assert!(output.iter().all(|sample| (sample - 0.5).abs() < 1e-6));
-    }
-
-    #[test]
-    fn resampling_an_empty_clip_yields_nothing() {
-        assert!(resample_linear(&[], 48_000, 24_000).is_empty());
+    fn a_phrase_of_long_words_gets_the_time_it_takes_to_say() {
+        let short_words = "I am not sure it is so. ".repeat(10);
+        let long_words = "Internationalisation considerations notwithstanding. ".repeat(4);
+        // Twelve words take far longer to say than sixty short ones - and the budget knows it.
+        assert!(frame_budget(&long_words) > frame_budget(&short_words) / 2);
+        let slowest_frames =
+            long_words.trim().chars().count() * SLOWEST_MS_PER_CHAR / CODEC_FRAME_MS;
+        assert!(frame_budget(&long_words) as usize >= slowest_frames);
+        // A bare word still gets the floor, and nothing runs away.
+        assert_eq!(frame_budget("Hmm."), 100);
+        assert_eq!(frame_budget(&"word ".repeat(10_000)), 1_500);
     }
 
     /// Where the reference voice and its transcript live.

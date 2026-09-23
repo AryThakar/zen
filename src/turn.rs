@@ -48,7 +48,6 @@ impl Phase {
         }
     }
 
-    /// Whether a reply in this phase can be cut short by the user.
     /// Whether speech arriving now interrupts work that has already produced something.
     ///
     /// Transcribing is deliberately absent: nothing has been said back yet, so speech there
@@ -99,10 +98,8 @@ pub struct TurnTimeouts {
     pub listening_ms: u64,
     /// How long speech-to-text may take before the turn is abandoned.
     ///
-    /// A backstop, not the working deadline, and it has to outlast one: the host applies a
-    /// deadline sized from the audio actually captured and answers from the words recognised
-    /// so far, where this discards the turn outright. It only catches the case where nothing
-    /// was recognised at all.
+    /// A backstop beyond the host's deadline sized from the captured audio. Incomplete
+    /// recognition is reported to the listener rather than answered as a complete question.
     ///
     /// Measured on the reference machine, recognition costs about 300 ms plus 630 ms for every
     /// second of speech - 1.0 s of audio in 763 ms, 7.3 s in 3.8 s, 33.9 s in 21.3 s - and a
@@ -200,8 +197,6 @@ impl TurnMachine {
                 self.enter(Phase::Listening, now_ms);
                 Vec::new()
             }
-
-            // Busy. Input is captured but must not steer the turn.
 
             // --- utterance complete ----------------------------------------------------------
             (Phase::Listening, Event::SegmentReady) => {

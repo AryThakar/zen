@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 //! Collect recognition jobs in capture order, then finalize exactly once at the endpoint.
 use crate::session::Generation;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Recognition jobs one utterance may hold.
 const MAX_PIECES: usize = 128;
@@ -13,8 +13,14 @@ const MAX_AUDIO_MS: usize = 180_000;
 pub struct Utterance {
     generation: Option<Generation>,
     pieces: BTreeMap<u64, Option<String>>,
+    /// Pieces that begin with audio repeated from the one before: see
+    /// [`crate::audio::SpeechSegment::overlaps_previous`].
+    overlapping: BTreeSet<u64>,
     closed: bool,
+    delivered: bool,
     audio_ms: usize,
+    /// Clear speech that recognition returned no words for. See [`Utterance::unheard`].
+    unheard_ms: usize,
     partials: BTreeMap<u64, BTreeMap<usize, String>>,
 }
 
@@ -40,15 +46,30 @@ impl Utterance {
         self.closed
     }
 
+    /// Only an open capture needs a microphone heartbeat. Recognition and repair may
+    /// continue after the user has muted the microphone.
+    pub fn expects_audio(&self) -> bool {
+        self.generation.is_some() && !self.closed
+    }
+
+    pub fn waiting_for_recognition(&self) -> bool {
+        self.generation.is_some() && self.closed && !self.delivered
+    }
+
     /// Whether this utterance has grown past what one turn may hold.
     ///
-    /// Reopening a full utterance would only fail on the next piece, so a turn that reaches
-    /// this ends and is answered; the speaker's next words start a turn of their own.
+    /// Reopening a full utterance would lose the next piece; the runner reports incomplete
+    /// input instead of answering a truncated question.
     pub fn is_full(&self) -> bool {
         self.pieces.len() >= MAX_PIECES || self.audio_ms >= MAX_AUDIO_MS
     }
 
-    pub fn add(&mut self, sequence: u64, audio_ms: usize) -> Result<(), &'static str> {
+    pub fn add(
+        &mut self,
+        sequence: u64,
+        audio_ms: usize,
+        overlaps_previous: bool,
+    ) -> Result<(), &'static str> {
         if self.generation.is_none() || self.closed {
             return Err("no open utterance");
         }
@@ -61,7 +82,33 @@ impl Utterance {
         }
         self.audio_ms += audio_ms;
         self.pieces.insert(sequence, None);
+        if overlaps_previous {
+            self.overlapping.insert(sequence);
+        }
         Ok(())
+    }
+
+    /// Pieces' words in capture order, joined the way they were cut. A piece cut at a pause
+    /// shares no audio with the next, so a word said on both sides of the seam was said twice
+    /// and stays twice. One cut with no breath to cut at repeats a little audio into the next,
+    /// so the words heard on both sides were said once.
+    fn joined<'a>(&self, pieces: impl Iterator<Item = (u64, &'a str)>) -> String {
+        let mut text = String::new();
+        for (sequence, piece) in pieces {
+            let piece = piece.trim();
+            if piece.is_empty() {
+                continue;
+            }
+            if self.overlapping.contains(&sequence) && !text.is_empty() {
+                text = crate::asr::join_overlapping(&[text, piece.to_string()]);
+            } else {
+                if !text.is_empty() {
+                    text.push(' ');
+                }
+                text.push_str(piece);
+            }
+        }
+        text
     }
 
     pub fn complete(&mut self, sequence: u64, text: String) -> bool {
@@ -73,6 +120,18 @@ impl Utterance {
             }
             _ => false,
         }
+    }
+
+    /// Records speech in one of this utterance's jobs that recognition could not turn into words.
+    pub fn unheard(&mut self, sequence: u64, ms: usize) {
+        if self.pieces.contains_key(&sequence) {
+            self.unheard_ms = self.unheard_ms.saturating_add(ms);
+        }
+    }
+
+    /// Milliseconds of this utterance that were clearly spoken but not recognised.
+    pub fn unheard_ms(&self) -> usize {
+        self.unheard_ms
     }
 
     pub fn contains(&self, sequence: u64) -> bool {
@@ -94,10 +153,13 @@ impl Utterance {
 
     /// Only show the recognized prefix; a later job cannot jump over an unfinished earlier one.
     pub fn preview(&self) -> String {
+        if self.delivered {
+            return String::new();
+        }
         let mut pieces = Vec::new();
         for (sequence, text) in &self.pieces {
             if let Some(text) = text {
-                pieces.push(text.trim().to_owned());
+                pieces.push((*sequence, text.clone()));
             } else {
                 if let Some(partials) = self.partials.get(sequence) {
                     let chunks: Vec<_> = partials
@@ -106,17 +168,18 @@ impl Utterance {
                         .take_while(|(expected, (actual, _))| *expected == **actual)
                         .map(|(_, (_, text))| text.clone())
                         .collect();
-                    pieces.push(crate::asr::join_overlapping(&chunks));
+                    pieces.push((*sequence, crate::asr::join_overlapping(&chunks)));
                 }
                 break;
             }
         }
-        pieces
-            .into_iter()
-            .filter(|text| !text.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ")
+        self.joined(
+            pieces
+                .iter()
+                .map(|(sequence, text)| (*sequence, text.as_str())),
+        )
     }
+
     /// Accept more audio into the utterance the endpoint just closed.
     ///
     /// The speaker carried on while recognition was still running. Everything already
@@ -124,30 +187,31 @@ impl Utterance {
     /// starting one of its own.
     pub fn reopen(&mut self) {
         self.closed = false;
+        self.delivered = false;
     }
 
     pub fn close(&mut self) {
         self.closed = true;
     }
+
     pub fn cancel(&mut self) {
         *self = Self::default();
     }
 
     pub fn take_ready(&mut self) -> Option<(Generation, String)> {
-        if !self.closed || self.pieces.values().any(Option::is_none) {
+        if !self.closed || self.delivered || self.pieces.values().any(Option::is_none) {
             return None;
         }
         let generation = self.generation?;
-        // Capture segments do not overlap. Preserve deliberate repetition between phrases.
-        let text = self
-            .pieces
-            .values()
-            .filter_map(Option::as_deref)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-        self.cancel();
+        let text = self.joined(
+            self.pieces
+                .iter()
+                .filter_map(|(sequence, text)| Some((*sequence, text.as_deref()?))),
+        );
+        // Repair can still be interrupted by a continuation of this utterance. Keep the
+        // recognized prefix until the runner begins or cancels a generation, but deliver
+        // each endpoint only once.
+        self.delivered = true;
         Some((generation, text))
     }
 }
@@ -176,10 +240,13 @@ mod tests {
         utterance.begin(generation());
         assert!(!utterance.is_full());
         for sequence in 0..MAX_PIECES as u64 {
-            assert!(utterance.add(sequence, 100).is_ok(), "piece {sequence}");
+            assert!(
+                utterance.add(sequence, 100, false).is_ok(),
+                "piece {sequence}"
+            );
         }
         assert!(utterance.is_full());
-        assert!(utterance.add(MAX_PIECES as u64, 100).is_err());
+        assert!(utterance.add(MAX_PIECES as u64, 100, false).is_err());
     }
 
     #[test]
@@ -187,14 +254,17 @@ mod tests {
         // The speaker carried on while recognition of the first half was still running.
         let mut utterance = Utterance::default();
         utterance.begin(generation());
-        utterance.add(0, 1_000).unwrap();
+        utterance.add(0, 1_000, false).unwrap();
         utterance.close();
         assert!(utterance.is_closed());
-        assert!(utterance.add(1, 1_000).is_err(), "closed means closed");
+        assert!(
+            utterance.add(1, 1_000, false).is_err(),
+            "closed means closed"
+        );
 
         utterance.reopen();
         assert!(!utterance.is_closed());
-        assert!(utterance.add(1, 1_000).is_ok());
+        assert!(utterance.add(1, 1_000, false).is_ok());
         assert_eq!(utterance.audio_ms(), 2_000, "both halves are one question");
 
         utterance.complete(0, "first half".into());
@@ -208,8 +278,8 @@ mod tests {
     fn early_recognition_waits_for_endpoint_and_keeps_all_phrases_in_capture_order() {
         let mut u = Utterance::default();
         u.begin(generation());
-        u.add(10, 1000).unwrap();
-        u.add(11, 1000).unwrap();
+        u.add(10, 1000, false).unwrap();
+        u.add(11, 1000, false).unwrap();
         u.complete(11, "and tomorrow".into());
         u.complete(10, "weather today".into());
         assert!(u.take_ready().is_none());
@@ -222,11 +292,11 @@ mod tests {
     fn late_last_chunk_blocks_finalization_but_stale_jobs_cannot_complete_a_new_turn() {
         let mut u = Utterance::default();
         u.begin(generation());
-        u.add(1, 1000).unwrap();
+        u.add(1, 1000, false).unwrap();
         u.close();
         assert!(u.take_ready().is_none());
         u.begin(generation());
-        u.add(2, 1000).unwrap();
+        u.add(2, 1000, false).unwrap();
         assert!(!u.complete(1, "old".into()));
         u.close();
         u.complete(2, "new".into());
@@ -237,8 +307,8 @@ mod tests {
     fn repetitions_and_empty_turns_are_preserved_correctly() {
         let mut u = Utterance::default();
         u.begin(generation());
-        u.add(1, 1000).unwrap();
-        u.add(2, 1000).unwrap();
+        u.add(1, 1000, false).unwrap();
+        u.add(2, 1000, false).unwrap();
         u.complete(1, "yes".into());
         u.complete(2, "yes please".into());
         u.close();
@@ -249,11 +319,30 @@ mod tests {
     }
 
     #[test]
+    fn a_seam_cut_with_no_breath_hears_its_repeated_words_once() {
+        // The words on a hard cut are in both pieces, because the audio there is; at a pause
+        // they are only repeated if they were said twice.
+        let mut u = Utterance::default();
+        u.begin(generation());
+        u.add(1, 10_000, false).unwrap();
+        u.add(2, 4_000, true).unwrap();
+        u.add(3, 1_000, false).unwrap();
+        u.complete(1, "and the smell of fresh bread was drifting".into());
+        u.complete(2, "was drifting out onto the street.".into());
+        u.complete(3, "Street food, I mean.".into());
+        u.close();
+        assert_eq!(
+            u.take_ready().unwrap().1,
+            "and the smell of fresh bread was drifting out onto the street. Street food, I mean."
+        );
+    }
+
+    #[test]
     fn partials_preserve_capture_order_and_never_commit_or_revive_stale_jobs() {
         let mut u = Utterance::default();
         u.begin(generation());
-        u.add(5, 1000).unwrap();
-        u.add(6, 1000).unwrap();
+        u.add(5, 1000, false).unwrap();
+        u.add(6, 1000, false).unwrap();
         assert_eq!(u.partial(6, 0, "tomorrow".into()).unwrap(), "");
         assert_eq!(u.partial(5, 1, "today".into()).unwrap(), "");
         assert_eq!(u.partial(5, 0, "weather".into()).unwrap(), "weather today");

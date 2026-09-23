@@ -42,7 +42,63 @@ fn ask(s: &mut Session, text: &str, at: u64) -> (Generation, Vec<Task>) {
     let g = s.generation();
     s.on_turn_ended(at + 700);
     s.on_transcript(g, text.into(), at + 800);
-    (g, s.on_filter(g, format!("CLEAN: {text}"), at + 900))
+    (
+        g,
+        s.on_filter(g, s.filter_revision(), format!("CLEAN: {text}"), at + 900),
+    )
+}
+
+#[test]
+fn resuming_after_asr_completion_keeps_the_prefix_and_rejects_stale_repair_fallbacks() {
+    let mut s = session();
+    let mut u = Utterance::default();
+    s.on_speech(0);
+    let g = s.generation();
+    u.begin(g);
+    assert!(u.expects_audio());
+    u.add(1, 900, false).unwrap();
+    u.complete(1, "What is the weather".into());
+    u.close();
+    assert!(
+        !u.expects_audio(),
+        "muting after the endpoint must not trigger an audio watchdog"
+    );
+    assert!(u.waiting_for_recognition());
+    s.on_turn_ended(1000);
+    let (_, text) = u.take_ready().unwrap();
+    assert!(!u.waiting_for_recognition(), "repair has its own deadline");
+    s.on_transcript(g, text, 1100);
+    let old_revision = s.filter_revision();
+    assert!(u.take_ready().is_none(), "one delivery per endpoint");
+
+    // Match the runner's continuation decision after the first ASR job has finished.
+    assert_eq!(s.phase(), Phase::Transcribing);
+    assert_eq!(u.generation(), Some(g));
+    assert!(!u.is_full());
+    s.on_speech(1200);
+    u.reopen();
+    assert!(s.use_raw_transcript(g, old_revision, 1250).is_empty());
+    assert_eq!(
+        s.generation(),
+        g,
+        "an obsolete repair failure cannot cancel capture"
+    );
+    u.add(2, 1000, false).unwrap();
+    u.complete(2, "in London tomorrow?".into());
+    u.close();
+    s.on_turn_ended(2300);
+    let (_, text) = u.take_ready().unwrap();
+    assert_eq!(text, "What is the weather in London tomorrow?");
+    s.on_transcript(g, text, 2400);
+    assert!(s.use_raw_transcript(g, old_revision, 2450).is_empty());
+    assert!(s
+        .on_filter(g, old_revision, "CLEAN: What is the weather".into(), 2451)
+        .is_empty());
+    let tasks = s.use_raw_transcript(g, s.filter_revision(), 2500);
+    assert!(tasks
+        .iter()
+        .any(|task| matches!(task, Task::Reply { messages, .. }
+        if messages.contains(&("user", "What is the weather in London tomorrow?".into())))));
 }
 
 #[test]
@@ -52,8 +108,8 @@ fn fast_asr_is_retained_until_endpoint_then_delivered_as_one_complete_question()
     s.on_speech(0);
     let g = s.generation();
     u.begin(g);
-    u.add(1, 500).unwrap();
-    u.add(2, 1000).unwrap();
+    u.add(1, 500, false).unwrap();
+    u.add(2, 1000, false).unwrap();
     u.complete(1, "What is the weather".into());
     u.complete(2, "in London tomorrow?".into());
     assert!(u.take_ready().is_none());
@@ -66,11 +122,13 @@ fn fast_asr_is_retained_until_endpoint_then_delivered_as_one_complete_question()
         tasks,
         vec![Task::Filter {
             generation: g,
+            revision: s.filter_revision(),
             raw: "What is the weather in London tomorrow?".into()
         }]
     );
     let tasks = s.on_filter(
         g,
+        s.filter_revision(),
         "CLEAN: What is the weather in London tomorrow?".into(),
         1900,
     );
@@ -139,15 +197,20 @@ fn clarification_returns_to_listening_without_a_false_transcription_timeout() {
     s.on_speech(0);
     s.on_turn_ended(700);
     let g = s.generation();
-    // Actual noise. "unclear" is a word someone could have said, and a transcript with
-    // words in it is no longer refused - that refusal is what left a speaker repeating a
-    // greeting at a machine that kept asking them to say it again.
-    s.on_transcript(g, "mm uh".into(), 800);
-    s.on_filter(g, "ASK: Could you repeat that?".into(), 900);
+    // Clear speech that recognition turned into no words: the one thing Zen asks about. A
+    // transcript of only noise - "mm uh" - ends the turn in silence instead.
+    let tasks = s.on_unheard(g, 800);
     assert_eq!(s.phase(), Phase::Preparing);
+    let asked = tasks
+        .iter()
+        .find_map(|task| match task {
+            Task::Speak { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .expect("the clarification is said");
     s.on_playback_started(g, 1200);
     assert_eq!(s.phase(), Phase::Speaking);
-    s.on_spoken(g, "Could you repeat that?".into());
+    s.on_spoken(g, asked);
     s.on_playback_finished(g, 2000);
     assert_eq!(s.phase(), Phase::Listening);
     assert!(s.poll(11_000).is_empty());
@@ -162,19 +225,32 @@ fn interruption_during_synthesis_rejects_old_results_and_credits_only_completed_
     let tasks = s.on_speech(1100);
     assert!(tasks.contains(&Task::StopSpeaking));
     assert!(tasks.contains(&Task::Cancel { through: g }));
-    assert!(s.on_filter(g, "ASK: stale".into(), 1200).is_empty());
+    assert!(s
+        .on_filter(g, s.filter_revision(), "ASK: stale".into(), 1200)
+        .is_empty());
     assert!(s.on_reply_complete(g, 1300).is_empty());
     s.on_spoken(g, "never heard".into());
-    // Nothing was spoken before the barge-in, so the abandoned question leaves nothing
-    // behind either: the window holds exchanges, not halves of them.
-    assert_eq!(s.conversation().turn_count(), 0);
+    // Nothing was spoken before the barge-in, so there is no assistant turn: a phrase that
+    // arrives after the cancellation was never heard and cannot be credited. The question
+    // stays, because the listener did ask it and Zen must not forget that it was asked.
+    assert_eq!(s.conversation().turn_count(), 1);
+    let said: Vec<_> = s
+        .conversation()
+        .messages()
+        .into_iter()
+        .filter(|(role, _)| *role == "user")
+        .map(|(_, text)| text)
+        .collect();
+    assert_eq!(said, ["Hello"]);
 }
 
 #[test]
 fn duplicate_filter_and_terminal_events_cannot_emit_a_second_reply() {
     let mut s = session();
     let (g, _) = ask(&mut s, "Hello", 0);
-    assert!(s.on_filter(g, "CLEAN: Hello".into(), 950).is_empty());
+    assert!(s
+        .on_filter(g, s.filter_revision(), "CLEAN: Hello".into(), 950)
+        .is_empty());
     assert!(s.on_reply_token(g, "Hi.", 1000).is_empty());
     let done = s.on_reply_complete(g, 1100);
     assert_eq!(

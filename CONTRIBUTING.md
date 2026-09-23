@@ -61,9 +61,11 @@ a real spoken session and describe what you observed in the pull request.
 
 ### Prompts
 
-`src/prompts/talker.txt` and `src/prompts/filter.txt` are compiled in with `include_str!`.
-The talker prompt is the talker slot's cached prefix: any edit, even whitespace, costs a full
-re-prefill on the next session, so keep edits deliberate.
+`src/prompts/core.txt`, `src/prompts/talker.txt` and `src/prompts/filter.txt` are compiled in
+with `include_str!`. The talker's system prompt is `core.txt` followed by `talker.txt`, and it
+is the talker slot's cached prefix: any edit to either, even whitespace, costs a full
+re-prefill on the next session, so keep edits deliberate. `cargo run --release --example
+filterprobe -- "a transcript"` runs a `filter.txt` edit against the real model.
 
 ## Submitting changes
 

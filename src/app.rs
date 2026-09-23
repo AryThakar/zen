@@ -3,10 +3,12 @@
 //!
 //! The interface is compiled into this binary and loaded from a private app origin, so it
 //! keeps the WebView2 capture stack without exposing a listener or network surface. Closing
-//! the window leaves the engine resident behind a tray icon; Windows
-//! toasts report anything the user would otherwise have missed on screen.
+//! the window leaves the engine resident behind a tray icon, and Windows toasts report
+//! anything the user would otherwise have missed on screen. Quitting - from the tray or from
+//! Settings - ends the window, the tray and every process under them.
 use crate::{
     bridge::{EngineOptions, Input, Transport},
+    engine::LlamaConfig,
     remote,
 };
 use futures_util::FutureExt;
@@ -26,8 +28,9 @@ use tauri::{
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::{mpsc, watch};
 
-/// Reply audio is produced far faster than it is played, so the queue only has to absorb
-/// scheduling jitter, not a whole utterance.
+/// Frames from the page waiting for the session loop: five seconds of capture. The loop takes up
+/// to 32 of them every 10 ms against one arriving every 20, so this only has to cover a loop held
+/// up by a slow step, never a steady backlog.
 const INPUT_QUEUE: usize = 256;
 
 struct Live {
@@ -138,8 +141,8 @@ async fn zen_attach(
     system_prompt: Option<String>,
 ) -> Result<u64, String> {
     // The session may start with instructions of the user's own, but `options` keeps Zen's
-    // configured default: that is what "Clear history & start fresh" with an empty box
-    // restores it to, and overwriting it here leaves the persona no way back.
+    // configured default: that is what "Start new" with an empty box restores it to, and
+    // overwriting it here leaves the persona no way back.
     let options = state.options.clone();
     let session_prompt = match system_prompt.filter(|p| !p.trim().is_empty()) {
         Some(prompt) => {
@@ -239,6 +242,14 @@ async fn zen_disconnect(state: tauri::State<'_, Arc<AppState>>) -> Result<(), St
     Ok(())
 }
 
+/// Quit Zen from Settings: the tray's Quit, reached from the window. Ending a session only
+/// unloads the models; this ends the application - the window, the tray icon and every
+/// process under it - so nothing is left running in the background.
+#[tauri::command]
+fn zen_quit(app: AppHandle) {
+    app.exit(0);
+}
+
 /// WebView2 asks the host before granting a page the microphone. With no handler attached
 /// the request is never answered and `getUserMedia` hangs forever instead of failing, so
 /// the embedded UI has to answer for itself. There is no untrusted page here: the only
@@ -321,7 +332,8 @@ pub fn run(options: EngineOptions) -> Result<(), crate::bridge::Error> {
             zen_attach,
             zen_input,
             zen_detach,
-            zen_disconnect
+            zen_disconnect,
+            zen_quit
         ])
         .setup(move |app| {
             // Tauri creates the configured main window before setup. Reusing it keeps
@@ -402,7 +414,7 @@ pub fn run(options: EngineOptions) -> Result<(), crate::bridge::Error> {
                         .notification()
                         .builder()
                         .title("Zen is still running")
-                        .body("Your session stays open. Open Zen from the tray, or quit it there.")
+                        .body("Your session stays open. Open Zen from the tray. To stop it completely, quit from the tray or Settings.")
                         .show();
                 }
             }
@@ -413,10 +425,22 @@ pub fn run(options: EngineOptions) -> Result<(), crate::bridge::Error> {
                 let state: tauri::State<'_, Arc<AppState>> = app.state();
                 if !state.exiting.swap(true, Ordering::AcqRel) {
                     api.prevent_exit();
+                    // Quitting is answered at once: the window goes now, and the session
+                    // closes out of sight.
+                    for window in app.webview_windows().values() {
+                        let _ = window.hide();
+                    }
+                    // A clean close unloads the models and keeps what the session learned, so
+                    // it is waited for - but only as long as the engine's own slowest step,
+                    // llama-server's shutdown deadline. A session that has not finished by
+                    // then (one still loading its models, say) cannot keep Zen running
+                    // unseen: the process ends anyway, and the job object ends every worker
+                    // and server with it.
+                    let grace = LlamaConfig::from_zen_root(&state.options.root).shutdown_timeout;
                     let state = Arc::clone(&state);
                     let handle = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        state.sessions.close().await;
+                        let _ = tokio::time::timeout(grace, state.sessions.close()).await;
                         handle.exit(0);
                     });
                 }
@@ -485,7 +509,7 @@ mod tests {
     fn only_the_embedded_origin_may_navigate_or_request_microphone_access() {
         for allowed in [
             "http://tauri.localhost/",
-            "https://tauri.localhost/capture.js",
+            "https://tauri.localhost/capture.mjs",
             "tauri://localhost/",
         ] {
             assert!(trusted_origin(&tauri::Url::parse(allowed).unwrap()));

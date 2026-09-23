@@ -14,7 +14,7 @@
 //! So an assistant turn is assembled from the chunks text-to-speech actually played, committed as
 //! they play, and truncated at whatever point the interruption landed.
 //!
-//! The second concern is the reply slot's KV cache. It runs [`KvPolicy::StablePrefix`], meaning a
+//! The second concern is the reply slot's KV cache ([`crate::engine::SlotKind::Talker`]). A
 //! byte-identical prompt prefix across turns lets `llama-server` reuse the cached prefix instead
 //! of re-prefilling the conversation - a stall the user hears as silence before the assistant
 //! speaks. Two rules follow, and most of the design below is downstream of them:
@@ -65,6 +65,9 @@ impl Utterance {
     /// An interrupted turn is marked rather than presented as a complete thought. Without the
     /// marker the model reads its own truncated sentence as finished and continues from a
     /// half-expressed idea; with it, it can see that it was cut off and pick the thread back up.
+    ///
+    /// The text before the dash is only what was actually heard, up to the last chunk the device
+    /// acknowledged - never what was generated. The dash is the marker `core.txt` describes.
     pub fn as_prompt_text(&self) -> String {
         if self.interrupted && !self.text.is_empty() {
             format!("{} —", self.text.trim_end())
@@ -231,7 +234,6 @@ impl Conversation {
         }
     }
 
-    /// The fixed prefix. Never carries timestamps, task state, or anything else that changes.
     /// Replace the instructions. Paired with `clear_history` this lets the persona
     /// change without unloading the model, which is the difference between starting
     /// fresh instantly and waiting for five gigabytes to load again.
@@ -247,6 +249,7 @@ impl Conversation {
         self.evictions = 0;
     }
 
+    /// The fixed prefix. Never carries timestamps, task state, or anything else that changes.
     pub fn system(&self) -> &str {
         &self.system
     }
@@ -263,32 +266,44 @@ impl Conversation {
         self.evictions
     }
 
-    pub fn record_user(&mut self, text: impl Into<String>) -> WindowChange {
-        self.push(Utterance::user(text))
-    }
+    /// Longest a carried-forward user turn may grow, in characters. Generous - a minute of
+    /// speech is roughly nine hundred - so it only ever trims a pathological run of barge-ins.
+    const CARRIED_LIMIT: usize = 4000;
 
-    /// Removes a question that was never answered.
+    /// Records what the person said, carrying forward anything they asked that was never
+    /// answered.
     ///
-    /// A user turn is recorded as soon as the transcript is accepted, before the reply exists.
-    /// If the turn is then abandoned - the speaker cut in and asked something else, or the
-    /// model failed - the question stays behind with nothing after it. Two or three of those
-    /// in a row and the window holds a stack of unanswered questions, so the next reply is
-    /// composed against all of them at once and answers whichever the model finds most
-    /// salient, which is rarely the one just asked. Dropping it keeps the window a record of
-    /// exchanges rather than of everything anyone said.
+    /// A user turn is stored as soon as the transcript is accepted, before any reply exists.
+    /// If that turn is then abandoned - they cut in and asked something else, or the model
+    /// failed - the question is left with nothing after it. Two or three of those and the
+    /// window holds a stack of questions, so the next reply is composed against all of them at
+    /// once and answers whichever the model finds most salient, which is rarely the one just
+    /// asked.
     ///
-    /// Only ever the last turn, and only when it is the user's: an assistant turn behind it
-    /// means the exchange completed and both halves belong there.
-    pub fn drop_unanswered_question(&mut self) -> bool {
-        if self
-            .turns
-            .back()
-            .is_some_and(|turn| turn.speaker == Speaker::User)
-        {
-            self.turns.pop_back();
-            return true;
+    /// The old fix was to delete the unanswered question, which prevented the stack by
+    /// throwing away what the person had told Zen: ask a question, speak again before the
+    /// first phrase is acknowledged, and the first question was gone from the conversation
+    /// entirely. Joining it to the next turn prevents the same stack without losing anything.
+    /// They did say both things, in this order, and one user turn per exchange is what keeps
+    /// the newest question the one being answered.
+    pub fn record_user(&mut self, text: impl Into<String>) -> WindowChange {
+        let text = text.into();
+        if let Some(previous) = self.turns.back_mut() {
+            if previous.speaker == Speaker::User {
+                previous.text.push('\n');
+                previous.text.push_str(&text);
+                // Barge-in after barge-in must not grow one turn without limit. The newest
+                // words are the ones being answered, so it is the oldest that go.
+                let length = previous.text.chars().count();
+                // Bound carried history, never trim the beginning of the new question.
+                let limit = Self::CARRIED_LIMIT.max(text.chars().count());
+                if length > limit {
+                    previous.text = previous.text.chars().skip(length - limit).collect();
+                }
+                return self.enforce_budget();
+            }
         }
-        false
+        self.push(Utterance::user(text))
     }
 
     /// Commits a reply, storing only what was spoken.
@@ -476,12 +491,24 @@ mod tests {
     }
 
     #[test]
+    fn carrying_an_unanswered_turn_never_trims_the_new_question() {
+        let mut chat = conversation();
+        chat.record_user("An earlier unanswered question");
+        let newest = format!("Keep this opening detail. {}", "word ".repeat(1000));
+        chat.record_user(newest.clone());
+        assert_eq!(chat.turns().last().unwrap().text, newest);
+    }
+
+    #[test]
     fn a_full_window_evicts_the_oldest_turns() {
         let mut chat = Conversation::new("sys", WindowBudget::for_slot(2_048));
         let long = "word ".repeat(200);
         let mut evicted_at_least_once = false;
         for _ in 0..40 {
-            let change = chat.record_user(long.clone());
+            chat.record_user(long.clone());
+            let mut reply = SpokenReply::new();
+            reply.played(&long);
+            let change = chat.record_reply(reply, false);
             evicted_at_least_once |= change.evicted_turns > 0;
         }
         assert!(evicted_at_least_once);
@@ -511,6 +538,9 @@ mod tests {
         let long = "word ".repeat(500);
         for _ in 0..30 {
             chat.record_user(long.clone());
+            let mut reply = SpokenReply::new();
+            reply.played(&long);
+            chat.record_reply(reply, false);
         }
         assert!(chat.estimated_tokens() <= chat.budget.prompt_limit());
         assert!(chat.turn_count() > 0);
@@ -524,7 +554,10 @@ mod tests {
         let long = "word ".repeat(300);
         let mut saw_invalidation = false;
         for _ in 0..30 {
-            saw_invalidation |= chat.record_user(long.clone()).evicted_turns > 0;
+            chat.record_user(long.clone());
+            let mut reply = SpokenReply::new();
+            reply.played(&long);
+            saw_invalidation |= chat.record_reply(reply, false).evicted_turns > 0;
         }
         assert!(saw_invalidation);
     }

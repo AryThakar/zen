@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-//! Separate native libraries by process. Framed PCM uses authenticated loopback sockets;
-//! Native output is discarded for privacy. A worker exits when its owner disconnects.
+//! The native speech libraries, each in a process of its own. Requests and PCM travel as framed
+//! packets over an authenticated loopback socket; a worker's own output is discarded, so nothing
+//! said reaches a log, and it exits as soon as its owner disconnects.
 use crate::{
     asr::{AsrEngine, AsrError, Recognizer, Transcript},
     tts::{Synthesizer, TtsEngine, TtsError},
@@ -79,6 +80,31 @@ fn pcm_samples(bytes: &[u8]) -> io::Result<Vec<f32>> {
     Ok(samples)
 }
 
+/// Waits for a packet to begin arriving on `socket` without consuming it, giving up when
+/// `cancelled` is set or `deadline` passes. A model load takes seconds, and a session that ends
+/// in the meantime should not sit out the whole startup allowance.
+fn await_packet(socket: &TcpStream, deadline: Instant, cancelled: &AtomicBool) -> io::Result<()> {
+    socket.set_read_timeout(Some(Duration::from_millis(50)))?;
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(io::ErrorKind::TimedOut, "no reply in time"));
+        }
+        match socket.peek(&mut [0u8]) {
+            // A closed connection is reported by the read that follows.
+            Ok(_) => return Ok(()),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 struct OwnedChild(Child);
 impl Drop for OwnedChild {
     fn drop(&mut self) {
@@ -94,7 +120,7 @@ struct Process {
     stop: Arc<AtomicBool>,
 }
 impl Process {
-    fn spawn(kind: &str, root: &Path) -> io::Result<Self> {
+    fn spawn(kind: &str, root: &Path, cancelled: &AtomicBool) -> io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let mut nonce = [0u8; 32];
@@ -113,7 +139,7 @@ impl Process {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
+            command.creation_flags(crate::engine::WINDOWS_CREATE_NO_WINDOW);
         }
         let spawned = command.spawn()?;
         // These already exit when the command socket closes, but a worker wedged inside a
@@ -126,6 +152,12 @@ impl Process {
         let mut child = OwnedChild(spawned);
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut socket = loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!("{kind} worker startup cancelled"),
+                ));
+            }
             if let Some(status) = child.0.try_wait()? {
                 return Err(io::Error::other(format!("{kind} worker exited: {status}")));
             }
@@ -152,6 +184,8 @@ impl Process {
             }
         };
         socket.set_nodelay(true)?;
+        await_packet(&socket, deadline, cancelled)
+            .map_err(|e| io::Error::new(e.kind(), format!("{kind} worker startup: {e}")))?;
         socket.set_read_timeout(Some(
             deadline
                 .saturating_duration_since(Instant::now())
@@ -232,7 +266,7 @@ impl Process {
                     "native cancellation deadline exceeded",
                 ));
             }
-            if progress.elapsed() > Duration::from_secs(30) {
+            if progress.elapsed() > NO_PROGRESS {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "native worker stopped making progress",
@@ -288,7 +322,7 @@ impl NativeEngine {
         Ok(Self {
             kind,
             root: root.to_path_buf(),
-            process: Mutex::new(Some(Process::spawn(kind, root)?)),
+            process: Mutex::new(Some(Process::spawn(kind, root, &AtomicBool::new(false))?)),
         })
     }
     fn request(
@@ -309,7 +343,7 @@ impl NativeEngine {
             return Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled"));
         }
         if process.is_none() {
-            *process = Some(Process::spawn(self.kind, &self.root)?);
+            *process = Some(Process::spawn(self.kind, &self.root, cancelled)?);
         }
         let result = process
             .as_mut()
@@ -347,7 +381,6 @@ impl Recognizer for NativeEngine {
         .map_err(|e| AsrError::Load(format!("native ASR: {e}")))?;
         Ok(Transcript {
             text: text.ok_or(AsrError::NoResult)?,
-            audio_ms: samples.len() * 1000 / 16000,
             latency_ms: start.elapsed().as_secs_f32() * 1000.0,
         })
     }
@@ -375,6 +408,15 @@ impl Synthesizer for NativeEngine {
     }
 }
 
+/// How long either side of a request may wait on the other before treating it as dead.
+///
+/// The worker's writes block whenever playback is behind: synthesis runs several times faster
+/// than speech, and audio is only taken off the socket as it is played. A shorter limit on that
+/// side turned an ordinary pause in playback into a failed phrase and a worker that exited and
+/// had to load its model again. A parent that has really gone is noticed at once regardless,
+/// by the command reader below.
+const NO_PROGRESS: Duration = Duration::from_secs(30);
+
 /// Internal entry point. It never opens microphone/output devices or launches another worker.
 pub fn worker_entry(kind: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let address = std::env::var("ZEN_WORKER_ADDR")?.parse::<std::net::SocketAddr>()?;
@@ -385,7 +427,7 @@ pub fn worker_entry(kind: &str) -> Result<(), Box<dyn std::error::Error + Send +
     let root = PathBuf::from(std::env::var_os("ZEN_WORKER_ROOT").ok_or("missing worker root")?);
     let mut socket = TcpStream::connect_timeout(&address, Duration::from_secs(5))?;
     socket.set_nodelay(true)?;
-    socket.set_write_timeout(Some(Duration::from_secs(3)))?;
+    socket.set_write_timeout(Some(NO_PROGRESS))?;
     write_packet(&mut socket, HELLO, nonce.as_bytes())?;
     let mut commands = socket.try_clone()?;
     let (tx, rx) = mpsc::sync_channel(1);
@@ -492,6 +534,41 @@ mod tests {
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
         (client, server)
+    }
+
+    #[test]
+    fn a_worker_still_loading_is_abandoned_once_its_request_is_cancelled() {
+        // A worker restarted mid-session loads its model before answering. If the session ends
+        // meanwhile, waiting out the full startup allowance would hold up the next session.
+        let (_client, server) = socket_pair();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancelled);
+        let canceller = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            flag.store(true, Ordering::Release);
+        });
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(60);
+        let error = await_packet(&server, deadline, &cancelled).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        canceller.join().unwrap();
+    }
+
+    #[test]
+    fn a_reply_that_has_begun_is_left_for_the_reader() {
+        let (mut client, server) = socket_pair();
+        write_packet(&mut client, READY, &[]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        await_packet(&server, deadline, &AtomicBool::new(false)).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert_eq!(read_packet(&mut &server).unwrap().kind, READY);
+        let silent = Instant::now() + Duration::from_millis(100);
+        let (_quiet, idle) = socket_pair();
+        let error = await_packet(&idle, silent, &AtomicBool::new(false)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
     }
 
     #[test]
