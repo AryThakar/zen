@@ -149,7 +149,6 @@ function audioGraph(rate = 24000) {
   const audio = {
     sampleRate: rate,
     currentTime: 0,
-    deviceTime: 0,
     outputLatency: 0,
     state: "running",
     destination: {},
@@ -159,7 +158,6 @@ function audioGraph(rate = 24000) {
       getFloatTimeDomainData(data) { data.fill(0); },
     }),
     createGain: () => ({ ...node(), gain: { value: 1, setTargetAtTime(value) { this.value = value; } } }),
-    getOutputTimestamp() { return { contextTime: this.deviceTime }; },
   };
   return { audio, sent, phrases, renderers };
 }
@@ -296,13 +294,11 @@ test("a stream cut short teaches the playout delay nothing", async () => {
 test("when a block arrives changes nothing about the stream", async () => {
   // Delivery used to decide where audio was placed, so a late block became a hole in a word.
   // Nothing here reads a clock, so a block delivered a second late is the same stream.
-  const { player, renderer, audio } = await playback();
   const render = async (delays) => {
     const graph = await playback();
     graph.player.begin({ generation: 3, phrase: 1, text: "Timing." });
     for (const [index, delay] of delays.entries()) {
       graph.audio.currentTime = delay;
-      graph.audio.deviceTime = delay;
       graph.player.queue({ generation: 3, phrase: 1, sequence: index + 1, pcm: speech(6000, index * 31) });
     }
     graph.player.end({ generation: 3, phrase: 1, text: "Timing.", pause_ms: 0 });
@@ -310,14 +306,12 @@ test("when a block arrives changes nothing about the stream", async () => {
     graph.player.dispose();
     return out;
   };
-  try {
-    const prompt = await render([0, 0.25, 0.5]);
-    const late = await render([0, 5, 30]);
-    assert.equal(prompt.length, late.length, "the stream must be the same length either way");
-    let worst = 0;
-    for (let i = 0; i < prompt.length; i++) worst = Math.max(worst, Math.abs(prompt[i] - late[i]));
-    assert.equal(worst, 0, "and identical sample for sample, worst difference " + worst);
-  } finally { player.dispose(); void renderer; void audio; }
+  const prompt = await render([0, 0.25, 0.5]);
+  const late = await render([0, 5, 30]);
+  assert.equal(prompt.length, late.length, "the stream must be the same length either way");
+  let worst = 0;
+  for (let i = 0; i < prompt.length; i++) worst = Math.max(worst, Math.abs(prompt[i] - late[i]));
+  assert.equal(worst, 0, "and identical sample for sample, worst difference " + worst);
 });
 
 test("a phrase ends on silence rather than on whatever amplitude synthesis stopped at", async () => {
@@ -659,7 +653,6 @@ test("what reaches the renderer is already at the device rate", async () => {
       "half a second of speech must be half a second of device frames, got " + seconds);
   } finally { player.dispose(); }
 });
-
 
 /// Loads the real render.js with the globals an AudioWorklet would provide, and returns an
 /// instance plus the messages it sends back. A stand-in cannot catch a bug in the thing it

@@ -326,7 +326,8 @@ mod tests {
 
     #[test]
     fn confirmed_speech_while_thinking_cancels_the_old_request() {
-        // The rule that keeps a half-heard word from cancelling an answer the user is waiting on.
+        // Only confirmed speech reaches the machine - a single loud frame never opens a turn - so
+        // when it arrives while an answer is being composed, the speaker has moved on.
         let mut machine = machine();
         machine.handle(Event::SpeechStarted, 0);
         machine.handle(Event::SegmentReady, 500);
@@ -398,11 +399,11 @@ mod tests {
     }
 
     #[test]
-    fn a_follow_up_needs_no_second_greeting() {
+    fn speech_after_a_reply_carries_on_in_the_follow_up_window() {
         let mut machine = machine();
         to_speaking(&mut machine, 0);
         machine.handle(Event::ReplyFinished, 3_000);
-        // Already listening, so speech starting again produces no opening sound.
+        // Already listening after the reply, so speech starting again needs nothing done.
         assert!(machine.handle(Event::SpeechStarted, 3_500).is_empty());
         assert_eq!(machine.phase(), Phase::Listening);
     }
@@ -427,8 +428,8 @@ mod tests {
         machine.handle(Event::SpeechStarted, 0);
         machine.handle(Event::SegmentReady, 100);
         // This is the backstop for a recogniser that returned nothing at all. The working
-        // deadline is the host's, sized from the audio captured, and it answers from a partial
-        // transcript rather than discarding what was said.
+        // deadline is the host's, sized from the audio captured; when that passes, the turn is
+        // reported as incomplete rather than answered from part of the question.
         assert!(
             machine.poll(60_000).is_empty(),
             "a long turn is not a stall, and this has to outlast the host deadline it backs up"

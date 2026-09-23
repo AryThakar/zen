@@ -152,7 +152,8 @@ fn integrated(samples: &[f32]) -> f64 {
     lufs(kept.iter().sum::<f64>() / kept.len() as f64)
 }
 
-/// The same true-peak reading the limiter makes: four-times oversampled, windowed sinc.
+/// True peak, measured independently of the limiter it checks: sixteen steps between samples
+/// through a Hann-windowed sinc thirty-two taps wide.
 fn true_peak(samples: &[f32]) -> f32 {
     const PHASES: usize = 16;
     const HALF: isize = 16;
@@ -294,7 +295,7 @@ fn main() -> R<()> {
                     .map(|g| g.parse())
                     .collect::<Result<_, _>>()?
             } else {
-                vec![Loudness::DEFAULT_GAIN, 1.85, 2.0, 2.2, 2.4]
+                vec![1.65, 1.85, Loudness::DEFAULT_GAIN, 2.2, 2.4]
             };
             measure(Path::new(&args[1]), &gains)
         }

@@ -1534,11 +1534,9 @@ mod tests {
     }
     #[test]
     fn split_decimal_tokens_are_not_split_into_sentences() {
-        // Enough words ahead of the decimal to pass the first-chunk gate, so the lookahead
-        // rule is what is being tested rather than the gate.
+        // Past the first-chunk gate and carrying no sentence end yet, so the decimal is the first
+        // candidate boundary and the lookahead rule is what is being tested rather than the gate.
         let mut chunker = ReplyChunker::new(ChunkLimits::default());
-        // Past the gate and carrying no sentence end yet, so the decimal is the first candidate
-        // boundary and the lookahead rule is what is being tested rather than the gate.
         for _ in 0..ChunkLimits::default().first_soft {
             assert!(chunker.push("checking ").is_none());
         }
@@ -1687,7 +1685,7 @@ deal more than size ever did.";
         // The floor is on cuts, not on the reply: whatever is left when generation ends is
         // spoken however short it is, which is why the last piece is exempt.
         let spoken = phrases(
-            "Hello, how can I help you with that today, Arya? There is a good deal to get              through, and I would rather take it in order than jump about. Tell me where you              would like to begin, and we can work forward from there together at your pace.",
+            "Hello, how can I help you with that today, Arya? There is a good deal to get through, and I would rather take it in order than jump about. Tell me where you would like to begin, and we can work forward from there together at your pace.",
         );
         for chunk in spoken.iter().take(spoken.len() - 1) {
             assert!(

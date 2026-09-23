@@ -1287,8 +1287,9 @@ mod tests {
         // sized from, 240 ms per second, was optimistic by a factor of two and a half.
         //
         // Past about a minute and a half of speech the ceiling binds and the budget is shorter
-        // than a from-scratch recognition. That is deliberate: by then the pieces captured at
-        // each pause have been coming back for minutes, and answering from them beats silence.
+        // than recognising all of it from scratch. That never has to happen: pieces are
+        // recognised while the speaker is still talking, so what is left when they stop is the
+        // last piece, not the whole question.
         for seconds in [1_u64, 5, 10, 20, 40, 57] {
             let measured = 300 + 630 * seconds;
             let budget = transcribe_budget_ms(seconds as usize * 1_000);

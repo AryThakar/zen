@@ -703,13 +703,15 @@ mod tests {
 
     #[test]
     fn a_missing_library_is_reported_rather_than_panicking() {
-        let outcome = TtsEngine::load(r"C:\zen-ai\lib\not-here.dll", r"C:\zen-ai\model\Qwen TTS");
+        let root = crate::runtime::discover_root();
+        let outcome = TtsEngine::load(root.join("lib/not-here.dll"), root.join("model/Qwen TTS"));
         assert!(matches!(outcome, Err(TtsError::Missing(_))));
     }
 
     #[test]
     fn a_missing_model_directory_is_reported() {
-        let outcome = TtsEngine::load(r"C:\zen-ai\lib\qwen.dll", r"C:\zen-ai\model\nope");
+        let root = crate::runtime::discover_root();
+        let outcome = TtsEngine::load(root.join("lib/qwen.dll"), root.join("model/nope"));
         assert!(matches!(outcome, Err(TtsError::Missing(_))));
     }
 
@@ -775,9 +777,12 @@ mod tests {
         assert_eq!(frame_budget(&"word ".repeat(10_000)), 1_500);
     }
 
-    /// Where the reference voice and its transcript live.
-    fn reference_dir() -> &'static Path {
-        Path::new(r"C:\zen-ai\model\Qwen TTS")
+    /// Where the reference voice and its transcript live, in the install these tests were built
+    /// inside, if there is one. Without one, the tests that need it have nothing to check.
+    fn reference_dir() -> PathBuf {
+        crate::runtime::discover_root()
+            .join("model")
+            .join("Qwen TTS")
     }
 
     #[test]

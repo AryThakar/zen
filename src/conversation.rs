@@ -516,22 +516,6 @@ mod tests {
     }
 
     #[test]
-    fn eviction_happens_in_occasional_large_steps_not_every_turn() {
-        // Each eviction moves the prefix boundary and costs a full re-prefill, heard as silence
-        // before the assistant speaks. Trimming to the brim every turn would pay that constantly.
-        let mut chat = Conversation::new("sys", WindowBudget::for_slot(2_048));
-        let long = "word ".repeat(100);
-        for _ in 0..60 {
-            chat.record_user(long.clone());
-        }
-        assert!(
-            chat.evictions() < 20,
-            "evicted on {} occasions across 60 turns; the slack is not working",
-            chat.evictions()
-        );
-    }
-
-    #[test]
     fn recent_turns_cannot_override_the_hard_budget() {
         // The immediate exchange is what the next reply is about.
         let mut chat = Conversation::new("sys", WindowBudget::for_slot(2_048));

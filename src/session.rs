@@ -583,7 +583,7 @@ mod tests {
         session.on_speech(0);
         session.on_turn_ended(100);
         let g = session.generation();
-        let raw = "remind me what we decided about the schedule for next week and whether the                    room is still booked";
+        let raw = "remind me what we decided about the schedule for next week and whether the room is still booked";
         session.on_transcript(g, raw.into(), 200);
         let tasks = session.use_raw_transcript(g, session.filter_revision(), 300);
         let shown = tasks.iter().find_map(|task| match task {
@@ -790,22 +790,23 @@ mod tests {
     }
 
     #[test]
-    fn the_assistant_hearing_itself_is_not_treated_as_a_new_utterance() {
-        // Echo cancellation leaks under load. We know exactly what is being said, so this costs
-        // one comparison and no model.
+    fn a_transcript_for_a_turn_already_being_answered_starts_nothing() {
+        // Only a turn waiting on recognition takes a transcript. One that arrives for the turn
+        // already being answered - a piece finishing late, or a duplicate - must not start a
+        // second reply over the first.
         let mut session = session();
         let (generation, spoken) = to_speaking(&mut session, 0);
-        // The recogniser picks up the assistant's own phrase leaking past echo cancellation.
         let tasks = session.on_transcript(generation, spoken, 500);
         assert!(
             tasks.is_empty(),
-            "the assistant's own words must not start a turn"
+            "a turn being answered takes no second transcript"
         );
     }
 
     #[test]
-    fn a_genuine_utterance_during_playback_is_still_accepted() {
-        // The echo check must not swallow real speech, or the user cannot interrupt with words.
+    fn words_said_over_a_reply_open_a_turn_of_their_own() {
+        // Zen keeps no echo filter of its own - the browser's canceller is the only one - so
+        // speech confirmed over a reply is someone talking, and what they say is taken.
         let mut session = session();
         to_speaking(&mut session, 0);
         session.on_speech(1000);
@@ -1280,7 +1281,7 @@ mod tests {
     #[test]
     fn restating_a_question_does_not_stack_unanswered_ones_in_the_window() {
         // Ask, get no reply, ask again, ask again. Every question was recorded the moment its
-        // transcript was accepted, so without dropping them the window ends up holding three
+        // transcript was accepted, so left as separate turns the window ends up holding three
         // in a row and the next reply is composed against all of them - which is how a
         // question about a lion gets answered two turns after it was abandoned.
         let mut session = session();

@@ -699,7 +699,7 @@ export class VoiceClient {
     this.status("Loading models on your device. Your conversation will start automatically.");
 
     // One channel, because order matters coming back too. A phrase's audio must not
-    // reach the scheduler before the `phrase_start` that announces it: the block has
+    // reach playback before the `phrase_start` that announces it: the block has
     // nowhere to attach, playback throws, and the turn is cleared mid-sentence. Two
     // channels give no ordering between themselves, however fast each one is.
     const frames = new this.Channel();

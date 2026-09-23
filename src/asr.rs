@@ -1037,15 +1037,16 @@ mod tests {
 
     #[test]
     fn a_deliberate_repetition_is_not_swallowed_whole() {
-        // "very very good" is something a person actually says. The dedup must not treat the
-        // second "very" as an overlap artefact and delete the rest of the sentence.
+        // A word repeated across a seam cannot be told from the overlap, so one "very" of "very
+        // very good" is lost - but only that word: the dedup must never take the rest of the
+        // sentence with it.
         let joined = join_overlapping(&["it was very".into(), "very good indeed".into()]);
         assert_eq!(joined, "it was very good indeed");
     }
 
     #[test]
     fn a_missing_model_directory_is_reported_clearly() {
-        let outcome = AsrEngine::load(r"C:\zen-ai\model\does-not-exist", 6);
+        let outcome = AsrEngine::load(std::env::temp_dir().join("zen-no-such-model"), 6);
         assert!(matches!(outcome, Err(AsrError::Missing(_))));
     }
 }

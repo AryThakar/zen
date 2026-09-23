@@ -1,5 +1,5 @@
-// Glass shading adapted from the user-supplied orb comparison. Keep its smooth
-// surface, translucent interior and thin-film palette; animate real voice energy.
+// Glass shading adapted from a reference orb study. Keep its smooth surface, translucent
+// interior and thin-film palette; animate real voice energy.
 const noise = `
 vec3 mod289v3(vec3 x){return x-floor(x*(1./289.))*289.;}
 vec4 mod289v4(vec4 x){return x-floor(x*(1./289.))*289.;}
@@ -241,10 +241,9 @@ export class LiquidOrb {
     this.animate = (now) => {
       this.frame = requestAnimationFrame(this.animate);
       if (document.hidden || this.failed) return;
-      // Draw on every frame the display offers. Gating to a fixed interval means
-      // the gap between drawn frames alternates between one and two refreshes,
-      // and that uneven pacing reads as stutter however high the average rate is.
-      // Reduced motion is the one case that deliberately runs slowly.
+      // Capped at 30 frames a second while Zen is doing anything, 20 at rest and 5 with
+      // reduced motion, rather than the display's own rate: the orb is the one thing on the
+      // page redrawn every frame, on the same integrated GPU as the rest of the window.
       const interval = this.motion.matches ? 200 : this.phase === "idle" ? 50 : 1000 / 30;
       if (now - (this.last || 0) < interval) return;
       const dt = Math.min(0.1, (now - (this.last || now)) / 1000);

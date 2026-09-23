@@ -667,11 +667,7 @@ mod tests {
         };
         // The walk upwards is what lets a build output directory find the install it sits in.
         assert!(!complete(&nested));
-        assert!(nested.ancestors().any(complete));
-        assert_eq!(
-            nested.ancestors().find(|dir| complete(dir)).unwrap(),
-            temp.as_path()
-        );
+        assert_eq!(root_near(Some(&nested), complete), temp);
         // An explicit root always wins over discovery.
         assert_eq!(
             options(&["--root", r"D:\elsewhere"]).unwrap().unwrap().root,

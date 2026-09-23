@@ -1357,6 +1357,9 @@ impl CapturePipeline {
 mod tests {
     use super::*;
 
+    /// Milliseconds of audio in one detector frame.
+    const FRAME_MS: usize = VAD_FRAME_SAMPLES * 1000 / SAMPLE_RATE as usize;
+
     fn capture_probabilities(probabilities: &[f32]) -> Vec<CaptureEvent> {
         let mut pipeline = CapturePipeline::new(SegmenterConfig::default()).unwrap();
         let mut events = Vec::new();
@@ -1870,13 +1873,14 @@ mod tests {
     #[test]
     fn the_endpoint_pause_is_long_enough_to_hide_the_final_transcription() {
         // The endpoint is not an arbitrary comfort setting. Recognising a final phrase costs
-        // roughly 450 ms plus 240 ms per second of audio, and it runs while this timer runs - so
-        // the window has to be at least that long or the model waits after the endpoint fires.
+        // roughly 300 ms plus 630 ms per second of audio on the reference machine, and it runs
+        // while this timer runs - so the window has to be at least that long or the model waits
+        // after the endpoint fires.
         // The adaptive ceiling is what has to be able to hide it; the learned value moves
         // between the floor and there.
         let ceiling_frames = SegmenterConfig::default().endpoint.ceiling();
         let endpoint_ms = ceiling_frames * VAD_FRAME_SAMPLES * 1000 / SAMPLE_RATE as usize;
-        let worst_final_chunk_ms = 450 + 240 * 2;
+        let worst_final_chunk_ms = 300 + 630 * 2;
         assert!(
             endpoint_ms >= worst_final_chunk_ms,
             "endpoint window of {endpoint_ms} ms cannot hide a {worst_final_chunk_ms} ms transcription"
@@ -2226,13 +2230,7 @@ mod tests {
         );
     }
 
-    // --- decimation --------------------------------------------------------------------------
-
-    // --- filtering ---------------------------------------------------------------------------
-
-    // --- rate conversion ---------------------------------------------------------------------
-
-    // --- double-talk guard -------------------------------------------------------------------
+    // --- the end-of-turn pause ---------------------------------------------------------------
 
     #[test]
     fn a_fixed_endpoint_holds_exactly_its_threshold() {
@@ -2303,8 +2301,8 @@ mod tests {
             after > before,
             "being cut off and carrying on must lengthen the endpoint, {before} -> {after}"
         );
-        // And it must still clear that pause a turn later: one uneventful turn relaxes by a
-        // single frame, which must not undo what the interruption taught it.
+        // And it must still clear that pause a turn later: one uneventful turn gives back only
+        // an eighth of what it learned, which must not undo what the interruption taught it.
         silence_until_end(&mut segmenter);
         assert!(segmenter.config.endpoint.frames() > before);
     }
@@ -2365,7 +2363,7 @@ mod tests {
         // length of real speech and a genuine question gets split in two, with the speaker's
         // own second half interrupting the answer to the first.
         let config = SegmenterConfig::default();
-        let cap_ms = config.max_turn_frames * 36;
+        let cap_ms = config.max_turn_frames * FRAME_MS;
         assert!(
             cap_ms >= 55_000,
             "a turn is cut off after {cap_ms} ms, which a real question can reach"
@@ -2395,7 +2393,7 @@ mod tests {
         );
         // And not so early that a long but ordinary answer is cut in half.
         assert!(
-            ended_at * 36 > 25_000,
+            ended_at * FRAME_MS > 25_000,
             "a turn must survive at least 25 seconds"
         );
     }
@@ -2556,7 +2554,7 @@ mod tests {
         // Someone reading aloud may not draw breath for a long time. Refusing to cut would hand
         // the transcriber an unbounded buffer and stall the turn.
         let samples = ms_to_samples(30_000);
-        let unbroken = vec![0.95f32; 30_000 / 36];
+        let unbroken = vec![0.95f32; 30_000 / FRAME_MS];
         let chunks = plan_chunks(samples, &unbroken, &ChunkConfig::default());
         assert!(
             chunks.len() > 1,
@@ -2572,7 +2570,7 @@ mod tests {
     fn no_chunk_exceeds_the_hard_maximum() {
         let config = ChunkConfig::default();
         let samples = ms_to_samples(45_000);
-        let chunks = plan_chunks(samples, &vec![0.95f32; 45_000 / 36], &config);
+        let chunks = plan_chunks(samples, &vec![0.95f32; 45_000 / FRAME_MS], &config);
         for chunk in &chunks {
             assert!(
                 chunk.duration_ms() <= config.maximum_ms + config.overlap_ms,
@@ -2632,6 +2630,4 @@ mod tests {
         assert!(!chunks.is_empty());
         assert_eq!(chunks.last().unwrap().end, samples);
     }
-
-    // --- interpolation -----------------------------------------------------------------------
 }

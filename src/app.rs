@@ -506,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_embedded_origin_may_navigate_or_request_microphone_access() {
+    fn only_the_embedded_origin_is_granted_the_microphone() {
         for allowed in [
             "http://tauri.localhost/",
             "https://tauri.localhost/capture.mjs",
