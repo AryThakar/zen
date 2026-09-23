@@ -105,7 +105,7 @@ test('real WebView2 completes spoken turns, releases workers, starts a fresh ses
       // Said in full, the whole reply is up on the board, a sentence at a time.
       const board = await page.locator('#captionText .sentence').allTextContents();
       assert(board.length >= 1, 'The reply goes up on the board as sentences.');
-      assert.equal(board.join(' ').replace(/s+/g, ' '), reply.replace(/s+/g, ' ').trim());
+      assert.equal(board.join(' ').replace(/\s+/g, ' '), reply.replace(/\s+/g, ' ').trim());
       assert.equal(await page.locator('#status.error').count(), 0);
       return reply;
     }

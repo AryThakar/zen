@@ -75,10 +75,9 @@ executable.
   glides aside as its name comes into focus (a click or a key skips it). Then a slowly drifting
   night sky (a pearl one in the light theme), frosted glass, reduced-motion support, a reply
   board that follows Zen's words as it says them, and a WebGL glass orb that deforms with the
-  reply audio and swells with your voice. A soft aurora around the
-  orb says what Zen is doing in colour - aqua while it listens, lavender while it thinks, rose
-  while it speaks - and a quiet moonlit one breathes around it while it sleeps, ready the
-  moment you come back.
+  reply audio and swells with your voice. A soft aurora around the orb says what Zen is doing
+  in colour - aqua while it listens, lavender while it thinks, rose while it speaks - and a
+  quiet moonlit one breathes around it while it sleeps, ready the moment you come back.
 
 ## Performance
 
@@ -104,19 +103,27 @@ The first turn after launch also loads the models, which took about 14 s on this
 ```mermaid
 flowchart TB
     subgraph W["Window (WebView2)"]
-        MIC["Microphone<br/>echo cancel, noise, gain"] --> WL["AudioWorklet<br/>20 ms PCM at 16 kHz"]
-        PB["Playback worklet<br/>jitter buffer"]
+        MIC["Microphone<br/>echo cancel, noise, gain"] --> WL["Capture worklet<br/>20 ms PCM at 16 kHz"]
+        TXT["Text box"]
+        PB["Playback worklet<br/>one stream, held start"]
     end
     subgraph E["Rust engine (same process)"]
         VAD["Silero VAD<br/>+ segmenter"] --> ASR["Qwen3-ASR<br/>worker process"]
-        ASR --> FIL["Filter slot<br/>repair, translate"]
-        FIL --> TALK["Talker slot<br/>Gemma 4 E2B"]
+        subgraph LS["llama-server: Gemma 4 E2B, two slots"]
+            FIL["Filter slot<br/>repair, translate"]
+            TALK["Talker slot<br/>the reply"]
+        end
+        ASR --> FIL
+        FIL --> TALK
+        HIST["Conversation history<br/>only what was heard"] --> TALK
         TALK --> CH["Phrase chunker"]
         CH --> TTS["Qwen3-TTS<br/>worker process"]
+        TTS --> LIM["True-peak limiter"]
     end
     WL -->|"ordered IPC"| VAD
-    TTS -->|"24 kHz PCM, true-peak limited"| PB
-    PB -->|"playback acks"| CH
+    TXT -->|"typed: no recognition or repair"| TALK
+    LIM -->|"24 kHz PCM"| PB
+    PB -->|"playback acks"| HIST
 ```
 
 The webview owns the microphone and speaker, so capture gets Chromium's echo cancellation,
@@ -125,7 +132,8 @@ everything else. A turn moves through `idle → listening → transcribing → t
 → speaking`, and every asynchronous job carries the generation it was issued under, so work
 that finishes after an interruption is dropped instead of played.
 
-The page acknowledges each block of audio only once it has actually played. Those
+Typed messages go straight to the talker: there is no recognition in typing to repair. The
+page acknowledges each block of audio only once it has actually played. Those
 acknowledgements drive backpressure and decide what enters the conversation history.
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the full design and the reasoning behind it
