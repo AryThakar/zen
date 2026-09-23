@@ -16,7 +16,7 @@ desktop window. Nothing you say, hear or type to Zen leaves the machine or is wr
 ![GPU: 4 GB VRAM](https://img.shields.io/badge/GPU-4%20GB%20VRAM-76B900)
 ![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-orange)
 
-<img src="docs/screenshots/speaking-light.png" width="860" alt="Zen speaking a reply: the glass orb deforms with the reply audio and the reply board shows the words as they are said" />
+<img src="docs/screenshots/speaking-dark.png" width="860" alt="Zen speaking a reply in the dark theme: the glass orb deforms with the reply audio and the reply board shows the words as they are said" />
 
 <sub>Screenshots are of the running app. Every reply shown was generated and spoken live by the local models.</sub>
 
@@ -135,9 +135,9 @@ acknowledgements drive backpressure and decide what enters the conversation hist
 
 ## Screenshots
 
-| Ready to talk | Dark theme, speaking |
+| Ready to talk | Light theme, speaking |
 | --- | --- |
-| <img src="docs/screenshots/home-light.png" alt="Zen home screen before a session: the orb, Start talking button and a text box" /> | <img src="docs/screenshots/speaking-dark.png" alt="Zen in the dark theme while speaking a reply, the sentence already said stepped back on the board" /> |
+| <img src="docs/screenshots/home-light.png" alt="Zen home screen before a session: the orb, Start talking button and a text box" /> | <img src="docs/screenshots/speaking-light.png" alt="Zen in the light theme while speaking a reply" /> |
 | **Conversation history** | **Settings** |
 | <img src="docs/screenshots/conversation.png" alt="The conversation panel: a question in a bubble and Zen's answer set as speech" /> | <img src="docs/screenshots/settings.png" alt="Settings: instructions, starting a new conversation, theme and listening" /> |
 

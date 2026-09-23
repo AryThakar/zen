@@ -42,12 +42,13 @@ This is the exact set of files Zen loads, as tested:
     │   └── crispasr.dll  ggml.dll  ggml-base.dll  ggml-cpu.dll
     └── Qwen TTS\
         ├── qwen-talker-0.6b-base-Q4_K_M.gguf   (or -Q8_0, preferred when present)
-        ├── qwen-tokenizer-12hz-Q4_K_M.gguf
+        ├── qwen-tokenizer-12hz-Q4_K_M.gguf     (or -Q8_0, preferred when present)
         ├── user_ref_voice.wav
         └── user_ref_text.txt
 ```
 
-Together these take about 5.9 GB. The Q8 talker below is optional and adds a further 364 MB.
+Together these take about 5.9 GB. The Q8 talker and Q8 codec below are optional and add a
+further 364 MB and 36 MB.
 
 ## Models
 
@@ -59,11 +60,15 @@ Together these take about 5.9 GB. The Q8 talker below is optional and adds a fur
 | `model\Qwen TTS\qwen-talker-0.6b-base-Q4_K_M.gguf` | 629 MB | [CC-TM/Qwen3-TTS-GGUF](https://huggingface.co/CC-TM/Qwen3-TTS-GGUF) |
 | `model\Qwen TTS\qwen-talker-0.6b-base-Q8_0.gguf` | 993 MB | same repository — optional, see below |
 | `model\Qwen TTS\qwen-tokenizer-12hz-Q4_K_M.gguf` | 255 MB | same repository |
+| `model\Qwen TTS\qwen-tokenizer-12hz-Q8_0.gguf` | 291 MB | same repository — optional, see below |
 
 Zen prefers the Q8 talker when it is present and falls back to Q4_K_M otherwise
 (`talker_file` in `src/tts.rs`), so choosing between them is a matter of which file is in
 the folder. Q8 sounds better and costs about 320 MB more graphics memory, which is most of
-what is spare on a 4 GB card; backing it out is deleting the file again.
+what is spare on a 4 GB card; backing it out is deleting the file again. The codec, which
+turns the talker's output back into sound, is chosen the same way (`codec_file`), and its Q8
+file is only 36 MB larger. The self-test sample below was taken with the Q4_K_M talker and
+the Q8_0 codec.
 
 Voice activity detection needs no download: Silero's export is compiled into `zen.exe`.
 
@@ -77,6 +82,7 @@ ec197cef7ccc589fdcae1becc3f4a3de119d0a41e790b898b519b1a048dad8d4  qwen3-asr-1.7b
 4b468ec7b1f62b90ef4ca316c0aa57deadfd54b2cf9651703ea753cedaf04226  qwen-talker-0.6b-base-Q4_K_M.gguf
 d54dbaf10591421fa764ed630d764efa717ae40cd959bd48c66d4eb1af226426  qwen-talker-0.6b-base-Q8_0.gguf
 cf3788b4d50aaa665fb6e57c170396aae03a3555fea52d2b5d0cda902d658039  qwen-tokenizer-12hz-Q4_K_M.gguf
+1883beeed99348fc35e23dd225e9082f93f6f8c109330a33d935baa8acdbfd94  qwen-tokenizer-12hz-Q8_0.gguf
 ```
 
 Check a download in PowerShell with `Get-FileHash <file> -Algorithm SHA256`.
