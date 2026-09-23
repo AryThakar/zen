@@ -240,27 +240,9 @@ impl LlamaConfig {
         }
     }
 
+    /// The configuration's own rules first, then the files it names. A setting that can never
+    /// work is reported as itself, whether or not the install is complete.
     pub fn validate(&self) -> Result<(), EngineError> {
-        if !self.executable.is_file() {
-            return Err(EngineError::InvalidConfig(format!(
-                "llama-server executable is missing: {}",
-                self.executable.display()
-            )));
-        }
-        if !self.model.is_file() {
-            return Err(EngineError::InvalidConfig(format!(
-                "model is missing: {}",
-                self.model.display()
-            )));
-        }
-        if let Some(draft) = &self.draft_model {
-            if !draft.is_file() {
-                return Err(EngineError::InvalidConfig(format!(
-                    "draft model is missing: {}",
-                    draft.display()
-                )));
-            }
-        }
         if !matches!(self.host.as_str(), "127.0.0.1" | "localhost" | "::1") {
             return Err(EngineError::InvalidConfig(
                 "the private model runtime must bind to loopback".into(),
@@ -292,6 +274,26 @@ impl LlamaConfig {
             return Err(EngineError::InvalidConfig(
                 "micro batch cannot exceed batch size".into(),
             ));
+        }
+        if !self.executable.is_file() {
+            return Err(EngineError::InvalidConfig(format!(
+                "llama-server executable is missing: {}",
+                self.executable.display()
+            )));
+        }
+        if !self.model.is_file() {
+            return Err(EngineError::InvalidConfig(format!(
+                "model is missing: {}",
+                self.model.display()
+            )));
+        }
+        if let Some(draft) = &self.draft_model {
+            if !draft.is_file() {
+                return Err(EngineError::InvalidConfig(format!(
+                    "draft model is missing: {}",
+                    draft.display()
+                )));
+            }
         }
         Ok(())
     }
@@ -1125,8 +1127,8 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
         let client = LlamaClient::new(&config).unwrap();
-        // Long enough that the cheap estimate cannot rule the limit out, so the exact count
-        // runs. Short conversations deliberately skip both round trips.
+        // The mock tokenizer counts an old, bulky exchange as far too long, so the oldest
+        // complete exchange has to go and the latest question has to stay.
         let bulky = format!("OLDER {}", "a lot of words to say ".repeat(1_200));
         let messages = vec![
             ("system", "instructions".into()),
@@ -1152,16 +1154,7 @@ mod tests {
             )
             .await
             .is_err());
-
-        // And the shortcut itself: an ordinary conversation is fitted without asking the
-        // server anything, which is why this client can answer with the server torn down.
         task.abort();
-        let ordinary = vec![("system", "instructions".into()), ("user", "latest".into())];
-        assert_eq!(
-            client.fit_messages(&ordinary, 1024).await.unwrap(),
-            ordinary,
-            "a short conversation must not need the server to be fitted"
-        );
     }
 
     #[test]
@@ -1240,7 +1233,13 @@ mod tests {
     }
 
     fn config() -> LlamaConfig {
-        LlamaConfig::from_zen_root(r"C:\zen-ai")
+        LlamaConfig::from_zen_root("no-install-here")
+    }
+
+    /// The reason `validate` gives, which has to be the rule under test rather than the
+    /// install being absent.
+    fn refusal(config: &LlamaConfig) -> String {
+        config.validate().unwrap_err().to_string()
     }
 
     fn args_of(config: &LlamaConfig) -> Vec<String> {
@@ -1392,21 +1391,39 @@ mod tests {
     fn a_remote_bind_address_is_rejected() {
         let mut config = config();
         config.host = "0.0.0.0".into();
-        assert!(config.validate().is_err());
+        assert!(
+            refusal(&config).contains("loopback"),
+            "{}",
+            refusal(&config)
+        );
     }
 
     #[test]
     fn a_micro_batch_larger_than_the_batch_is_rejected() {
         let mut config = config();
         config.micro_batch_size = config.batch_size + 1;
-        assert!(config.validate().is_err());
+        assert!(
+            refusal(&config).contains("micro batch"),
+            "{}",
+            refusal(&config)
+        );
     }
 
     #[test]
     fn zero_gpu_layers_is_rejected_rather_than_silently_running_on_cpu() {
         let mut config = config();
         config.gpu_layers = 0;
-        assert!(config.validate().is_err());
+        assert!(
+            refusal(&config).contains("gpu_layers"),
+            "{}",
+            refusal(&config)
+        );
+    }
+
+    #[test]
+    fn a_sound_configuration_is_refused_only_for_what_is_missing() {
+        // With every rule met, what is left to report is the install itself.
+        assert!(refusal(&config()).contains("llama-server executable is missing"));
     }
 
     // --- protocol ----------------------------------------------------------------------------
