@@ -2,7 +2,7 @@
 name = "zen"
 version = "0.3.0"
 edition = "2021"
-rust-version = "1.91"
+rust-version = "1.97"
 description = "Private, on-device voice assistant: local speech recognition, LLM and streaming speech synthesis behind one desktop window"
 license = "PolyForm-Noncommercial-1.0.0"
 repository = "https://github.com/AryThakar/zen"

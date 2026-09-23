@@ -47,7 +47,7 @@ Worse is a half-match. A directory holding one build's `ggml.dll` beside another
 `ggml-cuda.dll` registers no backend at all, reports nothing, and quietly synthesises on the
 processor. Measured here, that turned 3.2 s of speech from 1.5 s of work into 16.7 s.
 
-Two rules follow, and Zen enforces the first:
+Two rules follow, and Zen looks after the first as far as it can:
 
 1. The four ggml files beside `qwen.dll` must come from **one build**, the one `qwen.dll` was
    compiled against. Zen prefers a directory that holds all four; otherwise it falls back to

@@ -63,7 +63,12 @@ sheds its oldest **capture** frames and never control frames: losing 20 ms of sp
 recoverable, while a lost acknowledgement or end-of-utterance wedges the turn.
 
 Control messages carry a `type` and are rejected outright if the type or any field is
-unknown. A malformed frame fails the current turn; it does not tear down the session.
+unknown. A frame that cannot be read at all - an unknown kind, an odd PCM length, a control
+that does not parse - is refused by `zen_input` itself, and no turn sees it. A control that
+parses but that the turn cannot accept - an acknowledgement out of order, blank text - fails
+the current turn as `invalid_input`. Neither tears down the engine's session; this page ends
+its own session when `zen_input` refuses a frame, because its ordered queue cannot recover
+from a lost one.
 
 | Control | Meaning |
 | --- | --- |
@@ -154,10 +159,10 @@ arrive: `zen_attach` rejects its call, and `clear_history` fails as `invalid_inp
 
 `recognition_incomplete` means recognition did not finish within its deadline. The partial
 hypothesis is not committed as a complete question. Audio the recogniser cannot take - it has
-fallen behind, or the question has outgrown one turn - is not an error: the turn ends there
-and is answered from what was heard. Transcript repair failures
-fall back to the complete raw transcript only when their generation and input revision match.
-Resuming speech while repair runs retains the earlier recognized prefix of that utterance.
+fallen behind, or the question has reached what one utterance may hold - is not an error: the
+turn ends there and is answered from what was heard. Transcript repair failures fall back to
+the complete raw transcript only when their generation and input revision match. Resuming
+speech while repair runs retains the earlier recognized prefix of that utterance.
 
 A model or worker startup failure ends the session. A recoverable turn failure clears
 pending playback and allows another turn once the state returns to listening. An explicit

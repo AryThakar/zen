@@ -128,9 +128,9 @@ Measured on the reference machine, the LLM uses 1.6 GB of VRAM and decodes at 81
   are recognised while the speaker is still talking, so what is left when they stop is the
   last piece, not the whole question. Speaking while that finishes continues the same question
   instead of starting a new one - nothing has been said back yet, so there is nothing to
-  interrupt. If the recogniser falls behind, or a question outgrows one turn (three minutes),
-  the turn ends there and is answered from what was heard, rather than failing and losing
-  every word already recognised.
+  interrupt. If the recogniser falls behind, or a question reaches the three minutes of
+  speech one question may hold, the turn ends there and is answered from what was heard,
+  rather than failing and losing every word already recognised.
 
 ### The end-of-turn pause is measured, not configured
 
@@ -197,15 +197,16 @@ several unanswered questions in the window, and the next reply would be composed
 of them at once; deleting the unanswered one instead would forget something the person really
 said.
 
-Before each request the engine applies the model's real chat template, counts tokens with its
-tokenizer, reserves the reply budget plus 256 tokens, and evicts complete old exchanges when
-the request no longer fits. Eviction goes to half the window rather than just under the limit:
-every eviction moves the prompt prefix and costs the server its cached KV, so what a long
-conversation pays is how often that happens, not how much is dropped. Measured with the real
-system prompt and turns the length of a live session, the window first fills at turn 64 and
-then evicts about once every 34 turns, never holding fewer than 56 turns. Oversized
-instructions or an oversized latest input fail explicitly rather than being silently
-truncated.
+The window is trimmed in two places. The conversation estimates its own size as each turn is
+recorded, and once it passes the limit it evicts old turns down to half the window rather than
+just under the limit: every eviction moves the prompt prefix and costs the server its cached
+KV, so what a long conversation pays is how often that happens, not how much is dropped.
+Measured with the real system prompt and turns the length of a live session, the window first
+fills at turn 64 and then evicts about once every 34 turns, never holding fewer than 56 turns.
+Then, before each request, the engine applies the model's real chat template, counts tokens
+with its tokenizer, reserves the reply budget plus 256 tokens, and drops the oldest complete
+exchanges if the estimate was still too generous. Oversized instructions or an oversized
+latest input fail explicitly rather than being silently truncated.
 
 ## Between the recogniser and the speaker
 
@@ -217,9 +218,9 @@ allows `ASK: <request to repeat>` when there are no real words at all, but a tra
 any never reaches it, so an `ASK` is always a small model calling clear words garbled, and the
 raw transcript is answered instead. Its token budget is sized from the transcript it has to
 write back out, not fixed: a flat budget would really be a limit on how much anyone may say in
-one breath. If the repair is still cut off, the server's
-`finish_reason` reveals it and the raw transcript is used instead, because a truncated repair
-is the speaker's question with its end missing. A guard also rejects a "correction" that
+one breath. If the repair is still cut off, the server's `finish_reason` reveals it and the
+raw transcript is used instead, because a truncated repair is the speaker's question with its
+end missing. A guard also rejects a "correction" that
 invents words. It measures length in script-aware units rather than whitespace-separated
 words, since a sentence in Chinese, Japanese or Thai is one "word" however long it is.
 `--no-filter` skips the layer. Typed messages never go through it: there is no recognition in
@@ -246,8 +247,10 @@ unpunctuated and unspaced scripts, and decimal lookahead keeps `3.14` in one phr
   bounded job queue so fast generation cannot outrun it. Qwen3-TTS streams 24 kHz PCM in
   roughly 250 ms codec chunks, and cancellation is polled between chunks (5 ms to acknowledge
   in the self-test).
-- Reply audio travels to the page as raw bytes on its own channel, not base64 inside JSON,
-  which would cost a third more bandwidth and a copy per block.
+- Reply audio travels to the page as raw bytes, not base64 inside JSON, which would cost a
+  third more bandwidth and a copy per block. It shares one ordered channel with the events,
+  told apart by a kind byte, so a block can never arrive before the `phrase_start` that
+  announces it.
 - **Playback belongs to the page** (`src/client/audio.mjs`, `src/client/render.js`). Blocks
   are resampled continuously to the device rate and queued in an AudioWorklet that plays them
   as one stream, so there are no per-block start times to get wrong and a busy main thread

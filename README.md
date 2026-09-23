@@ -11,7 +11,7 @@ desktop window. Nothing you say, hear or type to Zen leaves the machine or is wr
 
 [![CI](https://github.com/AryThakar/zen/actions/workflows/ci.yml/badge.svg)](https://github.com/AryThakar/zen/actions/workflows/ci.yml)
 ![Platform: Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4)
-![Rust 1.91+](https://img.shields.io/badge/rust-1.91%2B-CE422B)
+![Rust 1.97+](https://img.shields.io/badge/rust-1.97%2B-CE422B)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB)
 ![GPU: 4 GB VRAM](https://img.shields.io/badge/GPU-4%20GB%20VRAM-76B900)
 ![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-orange)
@@ -59,8 +59,8 @@ executable.
 - **Transcript repair before answering.** A dedicated model slot fixes misrecognised words and
   translates non-English speech into English. A guard rejects "corrections" that invent words
   you never said, and a repair that runs out of budget falls back to the raw transcript.
-- **Streaming speech.** Replies start playing about 0.6 s after synthesis begins. The start of
-  each reply is held just long enough for delivery to stay ahead of it, the buffer deepens only
+- **Streaming speech.** Synthesis delivers the first audio of a reply about 0.6 s after it
+  begins. The start of each reply is held just long enough for delivery to stay ahead of it, the buffer deepens only
   when delivery proves it must, and a true-peak limiter in the engine keeps playback clean. An
   ordinary reply is synthesised in one piece rather than split, because every split is a
   separate call to the synthesiser that restarts the contour and resets the emphasis; the
@@ -155,7 +155,7 @@ acknowledgements drive backpressure and decide what enters the conversation hist
 - **NVIDIA GPU with 4 GB of VRAM** and a driver new enough for CUDA 13, which is the version
   of the CUDA runtime DLLs you download alongside llama.cpp
 - **16 GB RAM** and about **5.9 GB of disk** for the models and native libraries
-- To build: **Rust 1.91+** (MSVC toolchain). **Node.js 22+** only for the interface tests.
+- To build: **Rust 1.97+** (MSVC toolchain). **Node.js 22+** only for the interface tests.
 
 ## Getting started
 
@@ -185,7 +185,7 @@ them in an **installation root**:
 
 ```text
 <root>\
-├── Zen.exe                  the built target\release\zen.exe, renamed
+├── Zen.exe                  the downloaded one, or target\release\zen.exe renamed
 ├── bin\                     llama.cpp CUDA build and CUDA runtime DLLs
 ├── lib\                     qwen.dll (qwentts.cpp) and its ggml DLLs
 └── model\
@@ -219,8 +219,9 @@ conversation memory, both prompts and cancellation. A healthy install ends with
 
 ## Using Zen
 
-- **Talk.** Press **Start talking**, allow the microphone, and speak normally. Pause when you
-  are done; Zen answers out loud. Speak over it to interrupt.
+- **Talk.** Press **Start talking** and speak normally. Pause when you are done; Zen answers
+  out loud. Speak over it to interrupt. There is no permission prompt: if Windows keeps
+  desktop apps away from the microphone, Zen says where to turn that on.
 - **Type.** Write in the box under the controls; Enter sends and Shift+Enter starts a new line.
   Typing interrupts whatever Zen is doing. On a fresh page, the starters at the foot of the
   window ("Plan my morning", "Help me unwind", ...) send themselves as if typed.
@@ -234,7 +235,7 @@ conversation memory, both prompts and cancellation. A healthy install ends with
   you certainly heard, ends in a dash, and Zen carries on from there.
 - **Quiet.** After two minutes with nobody talking and Zen saying nothing, the microphone
   turns itself off, as if you had muted it, and Zen goes to sleep: the orb keeps its light
-  and a soft moonlit glow breathes around it. Start talking, typing or a starter wakes it.
+  and a soft moonlit glow breathes around it. Start talking or typing wakes it.
   Choose "Never" in Settings to keep the microphone on.
 - **Settings.** Instructions, light or dark theme and the quiet setting are kept
   between launches; clear the instructions or choose System to go back to the defaults. Also
@@ -358,9 +359,8 @@ examples/               measurement tools behind the numbers in these docs; not 
 - Windows and NVIDIA only. The native libraries are Windows CUDA builds, and process
   containment uses Windows job objects.
 - The models and native libraries are installed by hand; no installer that bundles them is
-  published.
-  `tauri.conf.json` is configured for an NSIS installer, but the tested distribution is the
-  single executable.
+  published. `tauri.conf.json` is configured for an NSIS installer, but the tested
+  distribution is the single executable.
 - Replies are always in English, and Zen has no tools: it cannot browse, set timers or control
   devices, and says so.
 - Interrupting over open speakers depends on Chromium's echo canceller and the room.

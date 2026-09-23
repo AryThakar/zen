@@ -97,8 +97,9 @@ you give it. Supply two files in `model\Qwen TTS\`:
   resampled to 24 kHz.
 - `user_ref_text.txt`: the exact words spoken in that recording, as UTF-8 text.
 
-Both are required. Synthesis without the transcript still runs but sounds noticeably off, with
-nothing to point at the cause. Only use a voice you have the right to use. The repository's
+Both are required, and Zen will not start synthesis without either. The synthesiser itself
+would run on the audio alone, but it would sound noticeably off with nothing pointing at the
+cause. Only use a voice you have the right to use. The repository's
 `.gitignore` excludes `*.wav` so a personal recording is not committed by accident.
 
 ## Native libraries

@@ -5,7 +5,7 @@ Thanks for your interest in Zen. This covers building, verifying and submitting 
 ## Prerequisites
 
 - **Windows 11** with WebView2 (ships with the OS)
-- **Rust 1.91+** on the MSVC toolchain, with `clippy` and `rustfmt`
+- **Rust 1.97+** on the MSVC toolchain, with `clippy` and `rustfmt`
 - **Node.js 22+** for the interface tests
 - For anything that touches the models or audio: an NVIDIA GPU with **4 GB VRAM**, **16 GB RAM**,
   and the runtime assets installed as described in [docs/SETUP.md](docs/SETUP.md)
@@ -22,7 +22,7 @@ installation root runs in place. Otherwise pass `--root PATH` or set `ZEN_ROOT`.
 
 ## Verifying a change
 
-Everything below except the last two commands runs without the models, and is what CI runs:
+These run without the models, and are what CI runs:
 
 ```powershell
 cargo fmt --all -- --check
