@@ -263,8 +263,11 @@ The system prompt is two compiled-in files, joined in that order:
 
 The shipped persona speaks as a warm, direct woman, always replies in English, and says plainly
 that it cannot set timers, browse or control devices rather than pretending to. It addresses
-its user by name (the author's), and [`src/prompts/filter.txt`](src/prompts/filter.txt)
-expects that name when repairing transcripts. Change the name in both files for your own build.
+its user by name (the author's), and that name is built in three places: the persona in
+[`src/prompts/talker.txt`](src/prompts/talker.txt), the transcript repair in
+[`src/prompts/filter.txt`](src/prompts/filter.txt), and the greeting request in
+[`src/remote.rs`](src/remote.rs). Change the name, and the pronouns that go with it, in all
+three for your own build.
 
 A session opens with a greeting in Zen's own words, written by the model from the day and the
 time of day, so it is not the same sentence every time; if the model is slow, a fixed line
