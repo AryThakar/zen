@@ -16,9 +16,15 @@ desktop window. Nothing you say, hear or type to Zen leaves the machine or is wr
 ![GPU: 4 GB VRAM](https://img.shields.io/badge/GPU-4%20GB%20VRAM-76B900)
 ![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-orange)
 
+
 <img src="docs/screenshots/speaking-dark.png" width="860" alt="Zen speaking a reply in the dark theme: the glass orb deforms with the reply audio and the reply board shows the words as they are said" />
 
 <sub>Screenshots are of the running app. Every reply shown was generated and spoken live by the local models.</sub>
+
+
+
+https://github.com/user-attachments/assets/610a6b48-7b1f-4b27-b4dc-a9d3559de0fc
+
 
 </div>
 
