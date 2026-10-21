@@ -22,7 +22,7 @@ desktop window. Nothing you say, hear or type to Zen leaves the machine or is wr
 <sub>Screenshots are of the running app. Every reply shown was generated and spoken live by the local models.</sub>
 
 
-<img src="docs/teaser.gif" width="860" alt="Zen's teaser, looping: the glass orb listening and speaking, and the reply board showing the words as they are said" />
+<img src="docs/teaser.webp" width="860" alt="Zen's teaser, looping: the glass orb listening and speaking, and the reply board showing the words as they are said" />
 
 <sub><a href="https://github.com/user-attachments/assets/610a6b48-7b1f-4b27-b4dc-a9d3559de0fc">Watch the teaser with sound</a></sub>
 
