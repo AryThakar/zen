@@ -8,6 +8,6 @@
     "test:ui": "node --test tests/ui.test.cjs",
     "test:native": "node --test tests/native-smoke.cjs"
   },
-  "devDependencies": { "playwright": "1.64.0" },
+  "devDependencies": { "playwright": "1.64.1" },
   "engines": { "node": ">=22" }
 }
