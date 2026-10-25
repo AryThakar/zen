@@ -259,31 +259,41 @@ test("audio arriving while earlier audio is still playing is never held", async 
   } finally { player.dispose(); }
 });
 
-test("how late delivery ran is learned from a stream that played out", async () => {
+/// Hands the player's clock to the test. Lateness is read off `performance.now()`, and a real
+/// wait measures whatever a busy machine adds on top: a 200 ms wait that ran 80 ms over failed
+/// CI on a commit that changed only the README.
+function ownClock(t) {
+  const clock = { now: 0 };
+  t.mock.method(performance, "now", () => clock.now);
+  return clock;
+}
+
+test("how late delivery ran is learned from a stream that played out", async (t) => {
+  const clock = ownClock(t);
   const { player, renderer } = await playback();
   try {
     player.begin({ generation: 3, phrase: 1, text: "Late." });
-    // 80 ms of audio, then the next only after 200 ms: delivery fell about 120 ms behind.
+    // 80 ms of audio, then the next only 200 ms later: delivery fell 120 ms behind.
     player.queue({ generation: 3, phrase: 1, sequence: 1, pcm: speech(1920) });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    clock.now += 200;
     player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: speech(1920, 1920) });
     player.end({ generation: 3, phrase: 1, text: "Late.", pause_ms: 0 });
     player.tick();
     assert.deepEqual(player.lags, [0], "not while it is still to be heard");
     renderer.play(renderer.stream().length);
     player.tick();
-    const learned = player.lags.at(-1);
-    assert(learned >= 115 && learned < 200, "learned " + learned);
-    assert(player.playoutDelay() >= learned);
+    assert.equal(player.lags.at(-1), 120);
+    assert(player.playoutDelay() >= 120);
   } finally { player.dispose(); }
 });
 
-test("a stream cut short teaches the playout delay nothing", async () => {
+test("a stream cut short teaches the playout delay nothing", async (t) => {
+  const clock = ownClock(t);
   const { player } = await playback();
   try {
     player.begin({ generation: 3, phrase: 1, text: "Cut." });
     player.queue({ generation: 3, phrase: 1, sequence: 1, pcm: speech(1920) });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    clock.now += 100;
     player.queue({ generation: 3, phrase: 1, sequence: 2, pcm: speech(1920, 1920) });
     player.reset(4);
     player.tick();
