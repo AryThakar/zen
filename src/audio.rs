@@ -24,9 +24,9 @@
 //! - **Recurrent VAD state is reset at every turn boundary.** Carrying it forward makes the
 //!   model open the next utterance already half-convinced someone is speaking.
 
-use std::{collections::VecDeque, path::Path};
+use std::{collections::VecDeque, path::Path, sync::OnceLock};
 
-use ort::{session::Session, value::Value};
+use ort::{environment::Environment, session::Session, value::Value};
 
 use crate::tts::TTS_SAMPLE_RATE;
 
@@ -72,6 +72,28 @@ const VAD_STATE_LEN: usize = 128;
 /// running a different voice detector than the one this was measured against.
 const SILERO_MODEL: &[u8] = include_bytes!("silero_vad.onnx");
 
+/// The ONNX Runtime environment every voice detector shares.
+///
+/// ort allows one environment per process, ever: building a second fails even after the first
+/// is dropped. So it is built once, on first use, and kept for the life of the process - what
+/// ort did implicitly before 2.0.0-rc.15. Anything else that builds an ONNX session in the same
+/// process has to use this one too.
+///
+/// ONNX Runtime's telemetry is on unless it is turned off, and it was on here while ort built
+/// the environment itself. Zen promises no telemetry, so it is off.
+pub fn onnx_environment() -> Result<&'static Environment, AudioError> {
+    static ENVIRONMENT: OnceLock<Result<Environment, String>> = OnceLock::new();
+    ENVIRONMENT
+        .get_or_init(|| {
+            ort::init()
+                .with_telemetry(false)
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(|error| AudioError::Onnx(error.clone()))
+}
+
 /// Silero VAD, holding its own recurrent state.
 ///
 /// The state is carried from frame to frame, which is what lets the model use context, but
@@ -91,7 +113,7 @@ pub struct SileroVad {
 impl SileroVad {
     /// The export compiled into this binary. This is what the running app uses.
     pub fn embedded() -> Result<Self, AudioError> {
-        let session = Session::builder()
+        let session = Session::builder(onnx_environment()?)
             .map_err(|error| AudioError::Onnx(error.to_string()))?
             .commit_from_memory(SILERO_MODEL)
             .map_err(|error| AudioError::Onnx(error.to_string()))?;
@@ -108,7 +130,7 @@ impl SileroVad {
         if !model.is_file() {
             return Err(AudioError::MissingModel(model.display().to_string()));
         }
-        let session = Session::builder()
+        let session = Session::builder(onnx_environment()?)
             .map_err(|error| AudioError::Onnx(error.to_string()))?
             .commit_from_file(model)
             .map_err(|error| AudioError::Onnx(error.to_string()))?;
